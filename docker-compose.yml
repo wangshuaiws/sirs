@@ -1,0 +1,43 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: sirs-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: sirs
+      POSTGRES_USER: sirs
+      POSTGRES_PASSWORD: sirs123
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sirs -d sirs"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  tdengine:
+    image: tdengine/tdengine:3.3.6.0
+    container_name: sirs-tdengine
+    ports:
+      - "6030:6030"   # RESTful API
+      - "6041:6041"   # WebSocket / HTTP
+    volumes:
+      - tdengine_data:/var/lib/taos
+      - tdengine_log:/var/log/taos
+
+  redis:
+    image: redis:7-alpine
+    container_name: sirs-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pg_data:
+  tdengine_data:
+  tdengine_log:

@@ -1,11 +1,27 @@
 <script setup lang="ts">
-import { computed, shallowRef, onMounted } from 'vue'
+import { computed, shallowRef, ref, nextTick, watch, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useGroupManager, useStockSearch } from '../composables/useGroupManager'
 
 const router = useRouter()
 const gm = useGroupManager()
 const stockSearch = useStockSearch()
+
+// 添加股票弹框
+const showAddStock = shallowRef(false)
+const pendingStock = shallowRef<any>(null)
+const addStockInputRef = ref<HTMLInputElement | null>(null)
+
+// 弹框打开时自动聚焦 + 清空搜索
+watch(showAddStock, async (v) => {
+  if (v) {
+    stockSearch.keyword.value = ''
+    stockSearch.results.value = []
+    pendingStock.value = null
+    await nextTick()
+    addStockInputRef.value?.focus()
+  }
+})
 
 // 分页
 const stockPage = shallowRef(1)
@@ -24,9 +40,6 @@ const showDialog = shallowRef(false)
 const editingGroup = shallowRef<any>(null)
 const saving = shallowRef(false)
 const groupForm = shallowRef({ name: '', description: '' })
-
-const showAddStock = shallowRef(false)
-const pendingStock = shallowRef<any>(null)
 
 function showCreateDialog() {
   editingGroup.value = null
@@ -225,6 +238,7 @@ onMounted(() => initPage())
         <div class="modal-form__group">
           <label class="modal-form__label">搜索股票</label>
           <input
+            ref="addStockInputRef"
             :value="stockSearch.keyword.value"
             @input="stockSearch.search(($event.target as HTMLInputElement).value)"
             type="text"

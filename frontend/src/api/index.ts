@@ -75,3 +75,10 @@ export const notificationApi = {
   markAllRead: () =>
     http.put('/notifications/read-all'),
 }
+
+// ── 画线工具 ──
+export const drawingApi = {
+  get: (stockCode: string) => http.get(`/drawings/${stockCode}`),
+  save: (stockCode: string, drawings: any[]) => http.put(`/drawings/${stockCode}`, drawings),
+  delete: (stockCode: string) => http.delete(`/drawings/${stockCode}`),
+}

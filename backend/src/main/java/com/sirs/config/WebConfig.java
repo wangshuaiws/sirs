@@ -23,9 +23,10 @@ public class WebConfig implements WebMvcConfigurer {
         registry.addInterceptor(rateLimitInterceptor)
                 .addPathPatterns("/api/auth/register");
 
-        // 鉴权 — /api/groups/** 和 /api/notifications/**
+        // 鉴权 — /api/groups/**、/api/notifications/**、/api/drawings/**
         registry.addInterceptor(authInterceptor)
                 .addPathPatterns("/api/groups/**")
-                .addPathPatterns("/api/notifications/**");
+                .addPathPatterns("/api/notifications/**")
+                .addPathPatterns("/api/drawings/**");
     }
 }

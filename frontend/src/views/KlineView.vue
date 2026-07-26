@@ -27,7 +27,7 @@
       </div>
 
       <div class="toolbar-right">
-        <button class="tool-btn" title="画线">✏️ 画线</button>
+        <button ref="drawingBtnRef" class="tool-btn" :class="{ 'tool-btn--active': drawingTool.drawingMode.value }" title="画线" :disabled="!kline.stockInfo.value" @click="onToggleDrawingMode">✏️ 画线</button>
         <button class="adj-toggle" :class="{ 'adj-toggle--on': kline.adjusted.value }" @click="onToggleAdjusted">前复权</button>
       </div>
     </div>
@@ -109,7 +109,7 @@
 
       <!-- 浮动信息面板（跟随鼠标，不遮挡K线） -->
       <Teleport to="body">
-        <div class="float-panel" v-if="isTracking && currentBar" :style="floatPanelStyle">
+        <div class="float-panel" v-if="isTracking && currentBar && !drawingTool.drawingMode.value" :style="floatPanelStyle">
           <div class="float-panel__row"><span>时间</span><strong>{{ currentBar.ts }}</strong></div>
           <div class="float-panel__row"><span>开盘价</span><strong>{{ fmtPrice(currentBar.open) }}</strong></div>
           <div class="float-panel__row"><span>最高价</span><strong>{{ fmtPrice(currentBar.high) }}</strong></div>
@@ -172,6 +172,17 @@
         </div>
       </div>
     </Teleport>
+    <!-- 画线工具面板 -->
+    <DrawingPanel
+      :visible="drawingTool.drawingMode.value"
+      :tool-mode="drawingTool.toolMode.value"
+      :selected-color="drawingTool.selectedColor.value"
+      :drawing-count="drawingTool.drawings.value.length"
+      :panel-style="drawingPanelStyle"
+      @select-tool="drawingTool.setTool"
+      @update:selected-color="drawingTool.selectedColor.value = $event"
+      @clear-all="drawingTool.clearAll()"
+    />
   </div>
 </template>
 
@@ -181,7 +192,9 @@ import { useRoute } from 'vue-router'
 import { useStockSearch } from '../composables/useStockSearch'
 import { useKlineData } from '../composables/useKlineData'
 import { useChart } from '../composables/useChart'
-import { formatVolume, formatAmount, calcMA, calcKDJ, calcMACD, calcZXDQ, calcZXDKX } from '../composables/useFormat'
+import { useDrawingTool } from '../composables/useDrawingTool'
+import DrawingPanel from '../components/DrawingPanel.vue'
+import { formatVolume, formatAmount } from '../composables/useFormat'
 import { groupApi, stockApi } from '../api'
 
 const periods = [{ label: '日K', value: 'daily' }, { label: '周K', value: 'weekly' }, { label: '月K', value: 'monthly' }]
@@ -192,6 +205,7 @@ const maConfigs = shallowRef([
   { label: 'MA20', period: 20, color: '#2196f3' },
   { label: 'MA60', period: 60, color: '#e63535' },
   { label: 'MA120', period: 120, color: '#f472b6' },
+  { label: 'MA233', period: 233, color: '#a78bfa' },
 ])
 
 const crossIdx = ref(-1)
@@ -199,20 +213,20 @@ const crossIdx = ref(-1)
 // 指标菜单 & 编辑器状态
 const showIndicatorMenu = shallowRef(false)
 const showMaEditor = shallowRef(false)
-const activeIndicator = shallowRef<'ma' | 'zhixingheyi'>('ma')
+const activeIndicator = shallowRef<'ma' | 'zhixingheyi'>('zhixingheyi')
 const maEditorValues = shallowRef<{ period: number }[]>([])
 const stockHeaderEl = useTemplateRef<HTMLElement>('stockHeaderEl')
 
 const visibleMaConfigs = computed(() => maConfigs.value.filter(m => m.period > 0))
 
-// 趋势线当前值（跟随十字光标移动）
+// 趋势线当前值（跟随十字光标移动，直接从 raw 读取接口字段）
 const zxdqVal = computed(() => {
   const raw = kline.klineData.value; if (!raw.length) return '—'
-  const l = _getZXDQ(raw)[atIdx()]; return l != null ? l.toFixed(2) : '—'
+  const r = raw[atIdx()]; return r?.zxdq != null ? (r.zxdq as number).toFixed(2) : '—'
 })
 const zxdkxVal = computed(() => {
   const raw = kline.klineData.value; if (!raw.length) return '—'
-  const l = _getZXDKX(raw)[atIdx()]; return l != null ? l.toFixed(2) : '—'
+  const r = raw[atIdx()]; return r?.zxdkx != null ? (r.zxdkx as number).toFixed(2) : '—'
 })
 
 // 下拉菜单位置：stock-header 正中间
@@ -303,6 +317,30 @@ const route = useRoute()
 const { keyword, results: searchResults, search } = useStockSearch()
 const kline = useKlineData()
 const chart = useChart()
+const drawingTool = useDrawingTool(chart.instance, kline.klineData)
+const drawingBtnRef = useTemplateRef<HTMLElement>('drawingBtnRef')
+
+// 画线面板定位：stock-header 右上角
+const drawingPanelStyle = computed(() => {
+  if (!stockHeaderEl.value) return { visibility: 'hidden' } as Record<string, string>
+  const r = stockHeaderEl.value.getBoundingClientRect()
+  return {
+    position: 'fixed',
+    top: (r.top + 6) + 'px',
+    right: (window.innerWidth - r.right + 6) + 'px',
+    zIndex: '100',
+  } as Record<string, string>
+})
+
+// 画图模式下隐藏十字线
+watch(() => drawingTool.drawingMode.value, (on) => {
+  if (!chart.instance.value) return
+  if (on) {
+    chart.instance.value.setOption({ axisPointer: { show: false } })
+  } else {
+    chart.instance.value.setOption({ axisPointer: { show: true, link: [{ xAxisIndex: 'all' }] } })
+  }
+})
 
 const selectedCode = shallowRef('')
 const showDropdown = shallowRef(false)
@@ -315,36 +353,38 @@ const filteredResults = computed(() => {
   return source.slice(0, 6)
 })
 
-// ── 指标计算缓存：同一数据引用内只算一次（WeakMap 自动 GC） ──
-const _mMACD = new WeakMap<any[], ReturnType<typeof calcMACD>>()
-const _mKDJ  = new WeakMap<any[], ReturnType<typeof calcKDJ>>()
-const _mMA   = new WeakMap<any[], Map<number, (number | null)[]>>()
-const _mZXDQ = new WeakMap<any[], (number | null)[]>()
-const _mZXDKX= new WeakMap<any[], (number | null)[]>()
-
-function _getMACD(raw: any[]) { let v = _mMACD.get(raw); if (!v) { v = calcMACD(raw); _mMACD.set(raw, v) } return v }
-function _getKDJ(raw: any[])  { let v = _mKDJ.get(raw); if (!v) { v = calcKDJ(raw); _mKDJ.set(raw, v) } return v }
-function _getMA(raw: any[], p: number) {
-  let m = _mMA.get(raw); if (!m) { m = new Map(); _mMA.set(raw, m) }
-  let v = m.get(p); if (!v) { v = calcMA(raw, p); m.set(p, v) }
-  return v
+// ── 指标数据：所有字段直接从接口返回的 raw 对象读取，不逐指标 .map() 拷贝 ──
+// 仅 VOL_MA5/MA10 接口不返回，需前端计算
+function _volMA(values: number[], period: number): (number | null)[] {
+  const r: (number | null)[] = []
+  let s = 0
+  for (let i = 0; i < values.length; i++) {
+    s += values[i]
+    if (i < period - 1) r.push(null)
+    else {
+      if (i >= period) s -= values[i - period]
+      r.push(s / period)
+    }
+  }
+  return r
 }
-function _getZXDQ(raw: any[])  { let v = _mZXDQ.get(raw); if (!v) { v = calcZXDQ(raw); _mZXDQ.set(raw, v) } return v }
-function _getZXDKX(raw: any[]) { let v = _mZXDKX.get(raw); if (!v) { v = calcZXDKX(raw); _mZXDKX.set(raw, v) } return v }
 
 // ── cursor helpers ──
-function getVal(arr: (number | null)[], idx: number) { return idx >= 0 && idx < arr.length ? arr[idx] : null }
 function atIdx(): number { const raw = kline.klineData.value; const ci = crossIdx.value; return ci >= 0 && ci < raw.length ? ci : raw.length - 1 }
 
 const cursorVol = computed(() => { const raw = kline.klineData.value; const i = atIdx(); return i >= 0 ? raw[i]?.volume : null })
-const cursorDIF = computed(() => { const raw = kline.klineData.value; return getVal(_getMACD(raw).dif, atIdx()) })
-const cursorDEA = computed(() => { const raw = kline.klineData.value; return getVal(_getMACD(raw).dea, atIdx()) })
-const cursorMACD = computed(() => { const raw = kline.klineData.value; return getVal(_getMACD(raw).macd, atIdx()) })
-const cursorK = computed(() => { const raw = kline.klineData.value; return getVal(_getKDJ(raw).k, atIdx()) })
-const cursorD = computed(() => { const raw = kline.klineData.value; return getVal(_getKDJ(raw).d, atIdx()) })
-const cursorJ = computed(() => { const raw = kline.klineData.value; return getVal(_getKDJ(raw).j, atIdx()) })
-const cursorVolMa5 = computed(() => { const raw = kline.klineData.value; return getVal(_getMA(raw.map((r: any) => ({ close: r.volume })), 5), atIdx()) })
-const cursorVolMa10 = computed(() => { const raw = kline.klineData.value; return getVal(_getMA(raw.map((r: any) => ({ close: r.volume })), 10), atIdx()) })
+// MACD / KDJ / 均线值：直接从 raw 读取接口返回的预计算字段
+const cursorDIF = computed(() => { const raw = kline.klineData.value; const i = atIdx(); return i >= 0 && i < raw.length ? (raw[i].macd_dif ?? null) : null })
+const cursorDEA = computed(() => { const raw = kline.klineData.value; const i = atIdx(); return i >= 0 && i < raw.length ? (raw[i].macd_dea ?? null) : null })
+const cursorMACD = computed(() => { const raw = kline.klineData.value; const i = atIdx(); return i >= 0 && i < raw.length ? (raw[i].macd_hist ?? null) : null })
+const cursorK = computed(() => { const raw = kline.klineData.value; const i = atIdx(); return i >= 0 && i < raw.length ? (raw[i].kdj_k ?? null) : null })
+const cursorD = computed(() => { const raw = kline.klineData.value; const i = atIdx(); return i >= 0 && i < raw.length ? (raw[i].kdj_d ?? null) : null })
+const cursorJ = computed(() => { const raw = kline.klineData.value; const i = atIdx(); return i >= 0 && i < raw.length ? (raw[i].kdj_j ?? null) : null })
+// VOL_MA 不在接口返回字段中，前端计算并缓存
+const _volMA5Cache = computed(() => { const raw = kline.klineData.value; if (!raw.length) return [] as (number | null)[]; const r: (number | null)[] = []; let s = 0; for (let i = 0; i < raw.length; i++) { s += Number(raw[i].volume); if (i < 4) { r.push(null) } else { if (i >= 5) s -= Number(raw[i - 5].volume); r.push(s / 5) } } return r })
+const _volMA10Cache = computed(() => { const raw = kline.klineData.value; if (!raw.length) return [] as (number | null)[]; const r: (number | null)[] = []; let s = 0; for (let i = 0; i < raw.length; i++) { s += Number(raw[i].volume); if (i < 9) { r.push(null) } else { if (i >= 10) s -= Number(raw[i - 10].volume); r.push(s / 10) } } return r })
+const cursorVolMa5 = computed(() => { const arr = _volMA5Cache.value; const i = atIdx(); return i >= 0 && i < arr.length ? arr[i] : null })
+const cursorVolMa10 = computed(() => { const arr = _volMA10Cache.value; const i = atIdx(); return i >= 0 && i < arr.length ? arr[i] : null })
 
 const currentBar = computed(() => {
   const raw = kline.klineData.value
@@ -403,7 +443,7 @@ function getPanelTop(key: string): string {
 
 function maValue(ma: any): string {
   const raw = kline.klineData.value; if (!raw.length) return '—'
-  const l = _getMA(raw, ma.period)[atIdx()]; return l != null ? l.toFixed(2) : '—'
+  const r = raw[atIdx()]; const v = r?.['ma' + ma.period]; return v != null ? (v as number).toFixed(2) : '—'
 }
 
 // ── 指标菜单 & 编辑器 ──
@@ -438,54 +478,51 @@ function onToggleZhixingheyi() {
   updateMainIndicator()
 }
 
-/** 仅更新主图指标系列，附图不动，zoom 不动 */
+/** 更新主图指标系列（切换 MA/知行合一 或编辑 MA 周期后调用） */
 function updateMainIndicator() {
-  if (!chart.instance.value || !kline.klineData.value.length) return
-  const raw = kline.klineData.value
+  if (!chart.instance.value) return
+  const raw = kline.klineData.value; if (!raw.length) return
   const showMA = activeIndicator.value === 'ma'
-  const emptyData = new Array(raw.length).fill(null)
 
-  // 从当前图表取出所有系列，移除旧的/残留的指标系列
-  const currentIndicatorNames = new Set([
+  // 过滤出非指标系列（K线/VOL/MACD/KDJ 保持不变）
+  const indicatorNames = new Set([
     ...maConfigs.value.map(m => m.label),
     'ZXDQ', 'ZXDKX',
   ])
   const opt = chart.instance.value.getOption() as any
   const allSeries = ((opt.series ?? []) as any[]).filter((s: any) => {
     const n = s.name
-    if (currentIndicatorNames.has(n)) return false
-    if (/^MA\d+$/.test(n)) return false       // 残留的旧 MA 名（如编辑后 MA60→MA7）
+    if (indicatorNames.has(n)) return false
+    if (/^MA\d+$/.test(n)) return false
     if (n === 'ZXDQ' || n === 'ZXDKX') return false
     return true
   })
 
-  // 追加更新后的均线系列
+  // 追加 MA 均线系列 — 直接从 raw 读接口字段
   for (const m of maConfigs.value) {
     const active = showMA && m.period > 0
     allSeries.push({
       name: m.label, type: 'line', xAxisIndex: 0, yAxisIndex: 0,
-      data: active ? _getMA(raw, m.period) : emptyData,
+      data: active ? raw.map((r: any) => r['ma' + m.period] ?? null) : [],
       symbol: 'none',
       lineStyle: { width: 1, color: m.color, opacity: active ? 1 : 0 },
     })
   }
 
-  // 追加更新后的知行合一趋势线系列
-  const showZX = !showMA
+  // 追加 ZXDQ/ZXDKX
   allSeries.push({
     name: 'ZXDQ', type: 'line', xAxisIndex: 0, yAxisIndex: 0,
-    data: showZX ? _getZXDQ(raw) : emptyData,
+    data: !showMA ? raw.map((r: any) => r.zxdq ?? null) : [],
     symbol: 'none',
-    lineStyle: { width: 1, color: '#FFFFFF', opacity: showZX ? 1 : 0 },
+    lineStyle: { width: 1, color: '#FFFFFF', opacity: !showMA ? 1 : 0 },
   })
   allSeries.push({
     name: 'ZXDKX', type: 'line', xAxisIndex: 0, yAxisIndex: 0,
-    data: showZX ? _getZXDKX(raw) : emptyData,
+    data: !showMA ? raw.map((r: any) => r.zxdkx ?? null) : [],
     symbol: 'none',
-    lineStyle: { width: 1, color: '#FFD700', opacity: showZX ? 1 : 0 },
+    lineStyle: { width: 1, color: '#FFD700', opacity: !showMA ? 1 : 0 },
   })
 
-  // 全量系列替换（包含所有 K线/VOL/MACD/KDJ + 新指标）
   chart.instance.value.setOption({ series: allSeries }, { replaceMerge: ['series'] })
 }
 
@@ -499,22 +536,43 @@ function focusChartIndex(index: number) {
 function onDomMouseMove(e: MouseEvent) {
   mouseY.value = e.clientY
 }
-
+function _onChartMouseLeave() { crossIdx.value = -1 }
 
 function onSearchInput() { showDropdown.value = true; activeIndex.value = 0; search(keyword.value) }
+
 function onSearchKeydown(e: KeyboardEvent) { if (!showDropdown.value) return; const len = filteredResults.value.length; if (!len && e.key !== 'Escape') return; switch (e.key) { case 'ArrowDown': e.preventDefault(); activeIndex.value = (activeIndex.value + 1) % len; break; case 'ArrowUp': e.preventDefault(); activeIndex.value = (activeIndex.value - 1 + len) % len; break; case 'Enter': e.preventDefault(); if (filteredResults.value[activeIndex.value]) selectStock(filteredResults.value[activeIndex.value]); break; case 'Escape': showDropdown.value = false; searchInputRef.value?.blur(); break } }
 async function loadMoreOnZoom(params: any) {
-  loadingMore = true
-  const oldLen = kline.klineData.value.length
-  const added = await kline.loadEarlier()
-  if (added > 0) {
-    const newLen = kline.klineData.value.length
-    const add = newLen - oldLen
-    renderChart({ start: Math.max(0, (params.start / 100 * oldLen + add) / newLen * 100), end: Math.min(100, (params.end / 100 * oldLen + add) / newLen * 100) })
-  }
-  loadingMore = false
+   loadingMore = true
+   try {
+     const oldLen = kline.klineData.value.length
+     const added = await kline.loadEarlier()
+     if (added > 0) {
+       const newLen = kline.klineData.value.length
+       const add = newLen - oldLen
+       renderChart({
+         start: Math.max(0, (params.start / 100 * oldLen + add) / newLen * 100),
+         end: Math.min(100, (params.end / 100 * oldLen + add) / newLen * 100),
+       })
+       drawingTool.onZoom()
+     }
+   } finally {
+     loadingMore = false
+   }
+ }
+async function selectStock(s: any) {
+  showDropdown.value = false; activeIndex.value = 0; keyword.value = `${s.code} ${s.name}`
+  // 保存旧股票画线
+  if (selectedCode.value) drawingTool.saveDrawings(selectedCode.value)
+  selectedCode.value = s.code
+  await kline.selectStock(s.code)
+  crossIdx.value = -1
+  drawingTool.exitDrawingMode()
+  await drawingTool.loadDrawings(s.code)
+  
+renderChart()
+  drawingTool.onZoom()
+  _checkWatchlist(s.code)
 }
-async function selectStock(s: any) { showDropdown.value = false; activeIndex.value = 0; keyword.value = `${s.code} ${s.name}`; selectedCode.value = s.code; await kline.selectStock(s.code); crossIdx.value = -1; renderChart(); _checkWatchlist(s.code) }
 
 async function selectStockByCode(code: string) {
   try {
@@ -525,8 +583,16 @@ async function selectStockByCode(code: string) {
   } catch { /* ignore */ }
 }
 
-async function onSwitchPeriod(p: string) { if (!selectedCode.value) return; await kline.switchPeriod(selectedCode.value, p); crossIdx.value = -1; renderChart() }
-async function onToggleAdjusted() { if (!selectedCode.value) return; kline.toggleAdjusted(); kline.klineData.value = []; kline.hasMore.value = true; const to = new Date().toISOString().slice(0, 10); const from = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10); await kline.loadRange(selectedCode.value, from, to); crossIdx.value = -1; renderChart() }
+async function onSwitchPeriod(p: string) { if (!selectedCode.value) return; drawingTool.clearAll(); drawingTool.exitDrawingMode(); await kline.switchPeriod(selectedCode.value, p); crossIdx.value = -1; renderChart() }
+async function onToggleAdjusted() { if (!selectedCode.value) return; drawingTool.clearAll(); drawingTool.exitDrawingMode(); kline.toggleAdjusted(); const to = new Date().toISOString().slice(0, 10); const from = kline.loadedFrom.value || new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10); await kline.loadRange(selectedCode.value, from, to, true); crossIdx.value = -1; renderChart() }
+
+function onToggleDrawingMode() {
+  if (drawingTool.drawingMode.value) {
+    drawingTool.exitDrawingMode()
+  } else if (kline.stockInfo.value) {
+    drawingTool.enterDrawingMode()
+  }
+}
 
 // ── 图表 ──
 let loadingMore = false
@@ -568,68 +634,101 @@ function renderChart(keepZoom?: { start: number; end: number }) {
     axisLabel: { color: '#B2B5BE', fontSize: 9, formatter: (v: number) => v.toFixed(2) },
   }, subAxisBase))
 
-  // 蜡烛
-  const ohlc = raw.map((r: any, i: number) => { const prev = i > 0 ? raw[i - 1].close : raw[i].close; const up = r.close > prev; const down = r.close < prev; const c = up ? '#e63535' : down ? '#1aad19' : '#9598A1'; return { value: [r.open, r.close, r.low, r.high], itemStyle: { color: c, color0: c, borderColor: c, borderColor0: c } } })
+  // ── 蜡烛图数据 ──
+  const ohlc = raw.map((r: any, i: number) => {
+    const prev = i > 0 ? raw[i - 1].close : raw[i].close
+    const up = r.close > prev; const down = r.close < prev
+    const c = up ? '#e63535' : down ? '#1aad19' : '#9598A1'
+    return { value: [r.open, r.close, r.low, r.high], itemStyle: { color: c, color0: c, borderColor: c, borderColor0: c } }
+  })
+
+  const showMA = activeIndicator.value === 'ma'
 
   const series: any[] = [
     { name: 'K线', type: 'candlestick', xAxisIndex: 0, yAxisIndex: 0, data: ohlc, barCategoryGap: '8%', barGap: '0%', barWidth: '85%' },
   ]
 
-  // 均线系列（初始全部创建，后续 updateMainIndicator 控制显隐）
+  // 面板 0: 均线 — 直接从 raw 读接口预计算字段（不调 _getMA）
   for (const m of maConfigs.value) {
-    const active = m.period > 0
-    series.push({ name: m.label, type: 'line' as const, xAxisIndex: 0, yAxisIndex: 0,
-      data: active ? _getMA(raw, m.period) : [],
-      symbol: 'none', lineStyle: { width: 1, color: m.color, opacity: active ? 1 : 0 } })
+    const active = showMA && m.period > 0
+    series.push({
+      name: m.label, type: 'line' as const, xAxisIndex: 0, yAxisIndex: 0,
+      data: active ? raw.map((r: any) => r['ma' + m.period] ?? null) : [],
+      symbol: 'none',
+      lineStyle: { width: 1, color: m.color, opacity: active ? 1 : 0 },
+    })
   }
-  // 知行合一趋势线系列（初始空数据，选中后 updateMainIndicator 填入数据）
-  series.push({ name: 'ZXDQ', type: 'line' as const, xAxisIndex: 0, yAxisIndex: 0,
-    data: [], symbol: 'none', lineStyle: { width: 1, color: '#FFFFFF', opacity: 0 } })
-  series.push({ name: 'ZXDKX', type: 'line' as const, xAxisIndex: 0, yAxisIndex: 0,
-    data: [], symbol: 'none', lineStyle: { width: 1, color: '#FFD700', opacity: 0 } })
+
+  // 面板 0: 知行合一趋势线 — 直接从 raw 读 zxdq/zxdkx
+  series.push({
+    name: 'ZXDQ', type: 'line' as const, xAxisIndex: 0, yAxisIndex: 0,
+    data: !showMA ? raw.map((r: any) => r.zxdq ?? null) : [],
+    symbol: 'none',
+    lineStyle: { width: 1, color: '#FFFFFF', opacity: !showMA ? 1 : 0 },
+  })
+  series.push({
+    name: 'ZXDKX', type: 'line' as const, xAxisIndex: 0, yAxisIndex: 0,
+    data: !showMA ? raw.map((r: any) => r.zxdkx ?? null) : [],
+    symbol: 'none',
+    lineStyle: { width: 1, color: '#FFD700', opacity: !showMA ? 1 : 0 },
+  })
 
   let gi = 1
-  // 成交量
-  const volRaw = raw.map((r: any) => r.volume)
-  const volClose = volRaw.map((v: number) => ({ close: v }))
-  const volMA5 = _getMA(volClose, 5)
-  const volMA10 = _getMA(volClose, 10)
-  const volData = raw.map((r: any, i: number) => { const p = i > 0 ? raw[i - 1].close : raw[i].close; return { value: r.volume, itemStyle: { color: r.close > p ? 'rgba(230,53,53,0.72)' : r.close < p ? 'rgba(26,173,25,0.72)' : 'rgba(149,152,161,0.30)' } } })
+
+  // 面板 1: VOL
+  const volData = raw.map((r: any, i: number) => {
+    const prev = i > 0 ? raw[i - 1].close : raw[i].close
+    const c = r.close > prev ? 'rgba(230,53,53,0.72)' : r.close < prev ? 'rgba(26,173,25,0.72)' : 'rgba(149,152,161,0.30)'
+    return { value: r.volume, itemStyle: { color: c } }
+  })
+  const volValues = raw.map((r: any) => Number(r.volume))
+  const volMA5 = _volMA(volValues, 5)
+  const volMA10 = _volMA(volValues, 10)
   series.push({ name: '成交量', type: 'bar', xAxisIndex: gi, yAxisIndex: gi, data: volData, barCategoryGap: '8%', barWidth: '85%' })
   series.push({ name: 'VOL_MA5', type: 'line', xAxisIndex: gi, yAxisIndex: gi, data: volMA5, symbol: 'none', lineStyle: { width: 1, color: '#fde047' } })
   series.push({ name: 'VOL_MA10', type: 'line', xAxisIndex: gi, yAxisIndex: gi, data: volMA10, symbol: 'none', lineStyle: { width: 1, color: '#2196f3' } })
   gi++
 
-  // MACD
-  const macdRes = _getMACD(raw)
-  const macdBars = macdRes.macd.map((v: number | null) => v == null ? null : { value: v, itemStyle: { color: v >= 0 ? 'rgba(230,53,53,0.65)' : 'rgba(26,173,25,0.65)' } })
-  series.push({ name: 'DIF', type: 'line', xAxisIndex: gi, yAxisIndex: gi, data: macdRes.dif, symbol: 'none', lineStyle: { width: 1, color: '#f8fafc' } })
-  series.push({ name: 'DEA', type: 'line', xAxisIndex: gi, yAxisIndex: gi, data: macdRes.dea, symbol: 'none', lineStyle: { width: 1, color: '#fde047' } })
+  // 面板 2: MACD — 直接从 raw 读 macd_dif/dea/hist
+  const macdDiffs = raw.map((r: any) => r.macd_dif ?? null)
+  const macdDeas = raw.map((r: any) => r.macd_dea ?? null)
+  const macdBars = raw.map((r: any) => {
+    const v = r.macd_hist
+    if (v == null) return null
+    return { value: v, itemStyle: { color: v >= 0 ? 'rgba(230,53,53,0.65)' : 'rgba(26,173,25,0.65)' } }
+  })
+  series.push({ name: 'DIF', type: 'line', xAxisIndex: gi, yAxisIndex: gi, data: macdDiffs, symbol: 'none', lineStyle: { width: 1, color: '#f8fafc' } })
+  series.push({ name: 'DEA', type: 'line', xAxisIndex: gi, yAxisIndex: gi, data: macdDeas, symbol: 'none', lineStyle: { width: 1, color: '#fde047' } })
   series.push({ name: 'MACD', type: 'bar', xAxisIndex: gi, yAxisIndex: gi, data: macdBars, barCategoryGap: '8%', barWidth: '85%' })
   gi++
 
-  // KDJ
-  const kdj = _getKDJ(raw)
-  series.push({ name: 'K', type: 'line', xAxisIndex: gi, yAxisIndex: gi, data: kdj.k, symbol: 'none', lineStyle: { width: 1, color: '#f8fafc' } })
-  series.push({ name: 'D', type: 'line', xAxisIndex: gi, yAxisIndex: gi, data: kdj.d, symbol: 'none', lineStyle: { width: 1, color: '#fde047' } })
-  series.push({ name: 'J', type: 'line', xAxisIndex: gi, yAxisIndex: gi, data: kdj.j, symbol: 'none', lineStyle: { width: 1, color: '#f472b6' } })
+  // 面板 3: KDJ — 直接从 raw 读 kdj_k/d/j
+  series.push({ name: 'K', type: 'line', xAxisIndex: gi, yAxisIndex: gi, data: raw.map((r: any) => r.kdj_k ?? null), symbol: 'none', lineStyle: { width: 1, color: '#f8fafc' } })
+  series.push({ name: 'D', type: 'line', xAxisIndex: gi, yAxisIndex: gi, data: raw.map((r: any) => r.kdj_d ?? null), symbol: 'none', lineStyle: { width: 1, color: '#fde047' } })
+  series.push({ name: 'J', type: 'line', xAxisIndex: gi, yAxisIndex: gi, data: raw.map((r: any) => r.kdj_j ?? null), symbol: 'none', lineStyle: { width: 1, color: '#f472b6' } })
   gi++
 
-  const dz = keepZoom ?? { start: 50, end: 100 }
+  const WINDOW_BARS = 60
+  const defaultStart = raw.length <= WINDOW_BARS ? 0 : Math.max(0, 100 - Math.round((WINDOW_BARS / raw.length) * 100))
+  const dz = keepZoom ?? { start: defaultStart, end: 100 }
   const allGridIdx = grids.map((_, i) => i)
 
   if (!chart.instance.value) {
     chart.init(chartEl.value)
     const chartInst = chart.instance.value!
     chartInst.on('datazoom', (params: any) => {
-      if (loadingMore || !kline.hasMore.value || kline.loading.value) return
       updateSubAxisRange()
-      const ds = params.start as number
-      if (ds == null || ds > 10) return
-      loadMoreOnZoom(params)
+      drawingTool.onZoom()
+      if (loadingMore || !kline.hasMore.value || kline.loading.value) return
+      // 可视窗口左边缘进入最左 15% 时触发加载更早数据
+      const ds = params.start ?? params.batch?.[0]?.start
+      const de = params.end ?? params.batch?.[0]?.end
+      if (ds == null || ds > 15) return
+      loadMoreOnZoom({ start: ds, end: de })
     })
     // 单击主图任意位置 → 切换追踪模式
     chartInst.getZr().on('click', (e: any) => {
+      if (drawingTool.drawingMode.value) return
       const rect = chartEl.value!.getBoundingClientRect()
       const relY = (e.event?.clientY ?? e.offsetY) - rect.top
       if (relY < rect.height * 0.02 || relY > rect.height * 0.42) return
@@ -639,18 +738,24 @@ function renderChart(keepZoom?: { start: number; end: number }) {
     })
     // 双击 → 退出追踪模式
     chartInst.getZr().on('dblclick', () => {
+      if (drawingTool.drawingMode.value) return
       isTracking.value = false
       crossIdx.value = -1
     })
     // 鼠标离开图表 → 指标回归最新值
-    chartEl.value!.addEventListener('mouseleave', () => {
-      crossIdx.value = -1
-    })
+    chartEl.value!.addEventListener('mouseleave', _onChartMouseLeave)
     // DOM 层追踪鼠标坐标
     chartEl.value!.addEventListener('mousemove', onDomMouseMove)
+    // 画线工具事件
+    chartInst.getZr().on('mousedown', (e: any) => drawingTool.handleMouseDown(e))
+    chartInst.getZr().on('mousemove', (e: any) => drawingTool.handleMouseMove(e))
+    chartInst.getZr().on('mouseup', (e: any) => drawingTool.handleMouseUp(e))
+    chartInst.getZr().on('contextmenu', (e: any) => drawingTool.handleContextMenu(e))
   }
 
+  loadingMore = true  // 阻止 render 过程中/后触发的 datazoom 事件加载数据
   chart.setOption({
+    animation: false,
     backgroundColor: '#131722', textStyle: { color: '#B2B5BE' },
     // 仅保留十字线，不显示 tooltip 弹框（数据改由浮动面板展示）
     axisPointer: { link: [{ xAxisIndex: 'all' }] },
@@ -666,21 +771,26 @@ function renderChart(keepZoom?: { start: number; end: number }) {
       textStyle: { color: 'transparent', fontSize: 0 },
       formatter: (ps: any) => {
         const k = ps.find((p: any) => p.seriesName === 'K线')
-        if (k?.dataIndex != null) {
-          requestAnimationFrame(() => { crossIdx.value = k.dataIndex })
+        const idx = k?.dataIndex
+        if (idx != null && idx !== crossIdx.value) {
+          crossIdx.value = idx
         }
         return ''
       },
       extraCssText: 'pointer-events: none; box-shadow: none;',
     },
     grid: grids, xAxis: xAxes, yAxis: yAxes, series,
-    dataZoom: [
-      { type: 'inside', xAxisIndex: allGridIdx, start: dz.start, end: dz.end },
-      { type: 'slider', xAxisIndex: allGridIdx, start: dz.start, end: dz.end, height: 18, bottom: 0, backgroundColor: '#131722', borderColor: '#2B2B43', textStyle: { color: '#B2B5BE', fontSize: 10 }, fillerColor: 'rgba(230,53,53,0.10)', handleStyle: { color: '#9598A1' }, dataBackground: { lineStyle: { color: '#2B2B43' }, areaStyle: { color: 'rgba(148,163,184,0.03)' } }, selectedDataBackground: { lineStyle: { color: '#e63535' }, areaStyle: { color: 'rgba(230,53,53,0.06)' } } },
-    ],
-  } as any)
+    dataZoom: [{
+      type: 'inside', xAxisIndex: allGridIdx,
+      start: dz.start, end: dz.end,
+      minSpan: 5, maxSpan: 80,           // 限制缩放幅度
+      zoomOnMouseWheel: 'ctrl',          // Ctrl+滚轮才缩放，避免触控板误触
+      moveOnMouseMove: true,             // 拖拽平移
+    }],
+  } as any, true)  // notMerge: true — 全量替换 chart option
   // 首次渲染后用可见范围更新附图 Y 轴 min/max
   updateSubAxisRange()
+  loadingMore = false
 }
 
 /** 根据 dataZoom 当前可见范围，同步 MACD/KDJ 附图 Y 轴的最低/最高值 */
@@ -692,22 +802,29 @@ function updateSubAxisRange() {
   if (!dz) return
   const si = Math.max(0, Math.floor((dz.start ?? 0) / 100 * total))
   const ei = Math.min(total, Math.ceil((dz.end ?? 100) / 100 * total))
-  const slice = (arr: (number | null)[]) => arr.slice(si, ei).filter((v): v is number => v != null)
 
-  // MACD 可见范围 min/max（DIF+DEA+MACD 并集，加 20% padding）
-  const m = _getMACD(raw)
-  const macdAll = [...slice(m.dif), ...slice(m.dea), ...slice(m.macd)]
-  let macdMin = macdAll.length ? Math.min(...macdAll) : -1
-  let macdMax = macdAll.length ? Math.max(...macdAll) : 1
+  // MACD 可见范围 min/max（直接从 raw 读取，不创建中间数组）
+  let macdMin = Infinity, macdMax = -Infinity
+  for (let i = si; i < ei; i++) {
+    const r = raw[i]
+    if (r.macd_dif != null) { if (r.macd_dif < macdMin) macdMin = r.macd_dif; if (r.macd_dif > macdMax) macdMax = r.macd_dif }
+    if (r.macd_dea != null) { if (r.macd_dea < macdMin) macdMin = r.macd_dea; if (r.macd_dea > macdMax) macdMax = r.macd_dea }
+    if (r.macd_hist != null) { if (r.macd_hist < macdMin) macdMin = r.macd_hist; if (r.macd_hist > macdMax) macdMax = r.macd_hist }
+  }
+  if (!isFinite(macdMin)) { macdMin = -1; macdMax = 1 }
   const macdPad = Math.max((macdMax - macdMin) * 0.20, 0.05)
   macdMin -= macdPad
   macdMax += macdPad
 
-  // KDJ 可见范围 min/max（K/D/J 并集）
-  const kj = _getKDJ(raw)
-  const kAll = [...slice(kj.k), ...slice(kj.d), ...slice(kj.j)]
-  const kdjMin = kAll.length ? Math.min(...kAll) : -10
-  const kdjMax = kAll.length ? Math.max(...kAll) : 110
+  // KDJ 可见范围 min/max（直接从 raw 读取）
+  let kdjMin = Infinity, kdjMax = -Infinity
+  for (let i = si; i < ei; i++) {
+    const r = raw[i]
+    if (r.kdj_k != null) { if (r.kdj_k < kdjMin) kdjMin = r.kdj_k; if (r.kdj_k > kdjMax) kdjMax = r.kdj_k }
+    if (r.kdj_d != null) { if (r.kdj_d < kdjMin) kdjMin = r.kdj_d; if (r.kdj_d > kdjMax) kdjMax = r.kdj_d }
+    if (r.kdj_j != null) { if (r.kdj_j < kdjMin) kdjMin = r.kdj_j; if (r.kdj_j > kdjMax) kdjMax = r.kdj_j }
+  }
+  if (!isFinite(kdjMin)) { kdjMin = -10; kdjMax = 110 }
 
   chart.instance.value.setOption({
     yAxis: [{}, {},
@@ -722,21 +839,44 @@ function onClickOutside(e: MouseEvent) {
   if (showIndicatorMenu.value && !(e.target as HTMLElement).closest('.indicator-menu') && !(e.target as HTMLElement).closest('.indicator-btn')) {
     showIndicatorMenu.value = false
   }
+  // 关闭画线面板
+  if (drawingTool.drawingMode.value && !(e.target as HTMLElement).closest('.drawing-panel') && !(e.target as HTMLElement).closest('.tool-btn')) {
+    drawingTool.exitDrawingMode()
+  }
 }
 onMounted(() => {
   document.addEventListener('click', onClickOutside)
+  document.addEventListener('keydown', onKeydown)
   const code = route.query.code as string | undefined
   if (code) {
     selectStockByCode(code)
   }
 })
 
+function onKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape' && drawingTool.drawingMode.value) {
+    drawingTool.exitDrawingMode()
+  }
+}
+
 watch(() => route.query.code, (newCode) => {
   if (newCode && typeof newCode === 'string' && newCode !== selectedCode.value) {
     selectStockByCode(newCode)
   }
 })
-onUnmounted(() => document.removeEventListener('click', onClickOutside))
+onUnmounted(() => {
+  document.removeEventListener('click', onClickOutside)
+  document.removeEventListener('keydown', onKeydown)
+  if (selectedCode.value) drawingTool.saveDrawings(selectedCode.value)
+  drawingTool.detach()
+  // 移除 DOM 层事件
+  if (chartEl.value) {
+    chartEl.value.removeEventListener('mouseleave', _onChartMouseLeave)
+    chartEl.value.removeEventListener('mousemove', onDomMouseMove)
+  }
+  // 销毁 ECharts 实例（含 resize listener）
+  chart.dispose()
+})
 </script>
 
 <style scoped>
@@ -765,6 +905,8 @@ onUnmounted(() => document.removeEventListener('click', onClickOutside))
 
 .tool-btn { padding: 6px 12px; border: 1px solid var(--border-default); border-radius: var(--radius-pill); background: var(--bg-root); color: var(--text-secondary); font-size: 12px; font-weight: 500; font-family: var(--font-sans); cursor: pointer; flex-shrink: 0; opacity: 0.6; }
 .tool-btn:hover { color: var(--text-primary); border-color: var(--accent); opacity: 1; }
+.tool-btn--active { background: var(--accent); color: #fff; border-color: var(--accent); opacity: 1; }
+.tool-btn:disabled { opacity: 0.3; pointer-events: none; }
 .adj-toggle { padding: 6px 12px; border: 1px solid var(--border-default); border-radius: var(--radius-pill); background: var(--bg-root); color: var(--text-secondary); font-size: 12px; font-weight: 500; font-family: var(--font-sans); cursor: pointer; flex-shrink: 0; }
 .adj-toggle:hover { color: var(--text-primary); border-color: var(--accent); }
 .adj-toggle--on { background: var(--accent); color: #fff; border-color: var(--accent); }

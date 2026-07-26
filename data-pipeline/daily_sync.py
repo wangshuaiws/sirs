@@ -374,7 +374,28 @@ def main():
     if args.sync_xdxr:
         print("\n[MODE] 同步除权除息事件...")
         from sync_xdxr import sync_all_stocks
-        sync_all_stocks(client)
+        affected = sync_all_stocks(client)
+
+        # 4. 复权事件变更 → 重算该股票的前复权指标
+        if affected:
+            print(f"\n[Recompute] {len(affected)} 只有新除权事件，重算前复权+指标...")
+            from calc_indicators_rest import batch_read_raw, compute_one, write_one_stock
+            recompute_ok = 0
+            for code in affected:
+                try:
+                    raw = batch_read_raw([code])
+                    if code not in raw or not raw[code]:
+                        print(f"  {code}: 无原始数据，跳过")
+                        continue
+                    _, name, adj, args = compute_one(code, "", raw[code])
+                    if write_one_stock(code, name, adj, args):
+                        recompute_ok += 1
+                        print(f"  {code} {name}: {len(adj)} bars 重算完成")
+                    else:
+                        print(f"  {code}: 写入失败")
+                except Exception as e:
+                    print(f"  {code}: 重算异常 {e}")
+            print(f"[Recompute] 完成 — 成功: {recompute_ok}/{len(affected)}")
 
     print("[Sync] 全部完成")
 

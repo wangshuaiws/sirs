@@ -113,11 +113,12 @@ def init_pg_tables():
 
 def insert_xdxr_events(code: str, xdxr_df, pg_conn):
     """将 mootdx xdxr DataFrame 中的除权事件批量写入 PG。
-    返回实际插入条数。"""
+    返回 (total_attempted, newly_inserted)。"""
     if xdxr_df is None or xdxr_df.empty:
-        return 0
+        return 0, 0
     cur = pg_conn.cursor()
-    inserted = 0
+    total = 0
+    new_count = 0
     for _, row in xdxr_df.iterrows():
         try:
             ex_date = f"{int(row['year']):04d}-{int(row['month']):02d}-{int(row['day']):02d}"
@@ -132,12 +133,14 @@ def insert_xdxr_events(code: str, xdxr_df, pg_conn):
                 VALUES (%s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (code, ex_date, category) DO NOTHING
             """, (code, ex_date, category, fenhong, song, peigu, peijia))
-            inserted += 1
+            total += 1
+            if cur.rowcount > 0:
+                new_count += 1
         except (ValueError, KeyError, TypeError):
             continue
     pg_conn.commit()
     cur.close()
-    return inserted
+    return total, new_count
 
 
 # ═══════════════════════════════════════════════════════════════════════

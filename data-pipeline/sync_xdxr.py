@@ -46,7 +46,8 @@ def save_xdxr_checkpoint(code: str):
 
 
 def sync_all_stocks(client=None):
-    """遍历所有活跃股票，拉取除权除息事件入库"""
+    """遍历所有活跃股票，拉取除权除息事件入库。
+    返回有新增除权事件的股票代码列表。"""
     if client is None:
         client = get_tdx_client()
 
@@ -64,11 +65,12 @@ def sync_all_stocks(client=None):
 
     if not remaining:
         print("[XDXR] 所有股票已同步，无需处理")
-        return
+        return []
 
     success = 0
     fail = 0
     empty = 0
+    affected = []
 
     for i, stock in enumerate(tqdm(remaining, desc="同步除权事件")):
         code = stock["code"]
@@ -83,14 +85,17 @@ def sync_all_stocks(client=None):
                 continue
 
             conn = get_pg_conn()
-            cnt = insert_xdxr_events(code, xdxr_df, conn)
+            total, new_cnt = insert_xdxr_events(code, xdxr_df, conn)
             conn.close()
 
             save_xdxr_checkpoint(code)
             success += 1
 
-            if cnt > 0:
-                tqdm.write(f"  [XDXR] {code} {stock['name']}: {cnt} 条事件")
+            if new_cnt > 0:
+                tqdm.write(f"  [XDXR] {code} {stock['name']}: {new_cnt} 条新事件")
+                affected.append(code)
+            elif total > 0:
+                tqdm.write(f"  [XDXR] {code} {stock['name']}: 无新事件（{total} 条已存在）")
 
         except Exception as e:
             fail += 1
@@ -103,6 +108,9 @@ def sync_all_stocks(client=None):
             time.sleep(TDX_BATCH_PAUSE)
 
     print(f"[XDXR] 同步完成 — 成功: {success}, 空事件: {empty}, 失败: {fail}")
+    if affected:
+        print(f"[XDXR] {len(affected)} 只有新增除权事件: {affected}")
+    return affected
 
 
 def main():
@@ -124,9 +132,9 @@ def main():
             xdxr_df = client.xdxr(symbol=code)
             if xdxr_df is not None and not xdxr_df.empty:
                 conn = get_pg_conn()
-                cnt = insert_xdxr_events(code, xdxr_df, conn)
+                total, new_cnt = insert_xdxr_events(code, xdxr_df, conn)
                 conn.close()
-                print(f"[XDXR] {code}: {cnt} 条事件")
+                print(f"[XDXR] {code}: {new_cnt} 条新事件")
             else:
                 print(f"[XDXR] {code}: 无除权事件")
         except Exception as e:

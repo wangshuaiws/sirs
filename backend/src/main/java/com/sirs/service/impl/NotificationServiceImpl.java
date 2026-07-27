@@ -1,6 +1,7 @@
 package com.sirs.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.sirs.dto.NotificationQuery;
 import com.sirs.dto.PageResult;
@@ -9,10 +10,15 @@ import com.sirs.mapper.NotificationMapper;
 import com.sirs.service.NotificationService;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+
 import java.util.*;
 
 @Service
 public class NotificationServiceImpl implements NotificationService {
+
+    private final DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     private final NotificationMapper notificationMapper;
 
@@ -36,10 +42,12 @@ public class NotificationServiceImpl implements NotificationService {
             );
         }
         if (query.getDateFrom() != null && !query.getDateFrom().isEmpty()) {
-            wrapper.ge(Notification::getCreatedAt, query.getDateFrom() + " 00:00:00");
+            LocalDateTime from = LocalDateTime.parse(query.getDateFrom() + " 00:00:00", formatter);
+            wrapper.ge(Notification::getCreatedAt, from);
         }
         if (query.getDateTo() != null && !query.getDateTo().isEmpty()) {
-            wrapper.le(Notification::getCreatedAt, query.getDateTo() + " 23:59:59");
+            LocalDateTime to = LocalDateTime.parse(query.getDateTo() + " 23:59:59", formatter);
+            wrapper.le(Notification::getCreatedAt, to);
         }
 
         wrapper.orderByDesc(Notification::getCreatedAt);
@@ -110,24 +118,26 @@ public class NotificationServiceImpl implements NotificationService {
 
     @Override
     public void markRead(Long userId, Long id) {
-        Notification notification = notificationMapper.selectById(id);
-        if (notification == null || !notification.getUserId().equals(userId)) {
+        boolean updated = notificationMapper.update(
+                null,
+                new LambdaUpdateWrapper<Notification>()
+                        .eq(Notification::getId, id)
+                        .eq(Notification::getUserId, userId)
+                        .set(Notification::getIsRead, true)
+        ) > 0;
+        if (!updated) {
             throw new BusinessException(5001, "通知不存在");
         }
-        notification.setIsRead(true);
-        notificationMapper.updateById(notification);
     }
 
     @Override
     public void markAllRead(Long userId) {
-        List<Notification> unread = notificationMapper.selectList(
-                new LambdaQueryWrapper<Notification>()
+        notificationMapper.update(
+                null,
+                new LambdaUpdateWrapper<Notification>()
                         .eq(Notification::getUserId, userId)
                         .eq(Notification::getIsRead, false)
+                        .set(Notification::getIsRead, true)
         );
-        for (Notification n : unread) {
-            n.setIsRead(true);
-            notificationMapper.updateById(n);
-        }
     }
 }

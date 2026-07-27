@@ -96,7 +96,7 @@ function onDocClick(e: MouseEvent) {
 
 function formatTime(ts: string): string {
   if (!ts) return '-'
-  return ts.replace('T', ' ').substring(0, 16)
+  return ts.substring(0, 10)
 }
 
 function unreadBadge(key: string): string {
@@ -635,8 +635,10 @@ onUnmounted(() => {
 .col-type { width: 90px; }
 .col-stock { width: 140px; }
 .col-msg { }
-.col-time { width: 140px; }
-.col-action { width: 90px; }
+.notify-table th.col-time,
+.time-cell { width: 120px; text-align: center; }
+.notify-table th.col-action,
+.notify-table td:last-child { width: 110px; text-align: center; }
 
 /* ── Type Badge ── */
 .type-badge {

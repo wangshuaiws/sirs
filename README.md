@@ -198,22 +198,45 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-#### 全量导入 A 股数据（首次运行）
+#### 2a. 导入 PostgreSQL 表结构
+
+`schema.sql` 需要手动执行一次，建好 `users`、`stocks`、`groups` 等全部业务表：
 
 ```bash
-# 导入全量 A 股列表 + 历史日K线（~5200 只股票，每只最近 800 个交易日）
+docker exec -i sirs-postgres psql -U sirs -d sirs < ../backend/src/main/resources/schema.sql
+```
+
+#### 2b. 全量导入 A 股数据
+
+```bash
+# 导入全量 A 股列表 + 历史日K线（~5200 只股票，每只最近 800 个交易日）+ 除权除息事件
 python init_stocks.py
 ```
 
 > ⏱ 全量导入耗时约 15~30 分钟，脚本内置断点续传机制，中断后重新运行会自动跳过已完成的股票。
 
-#### 前复权指标预计算
+#### 2c. 补全全部历史 K 线（关键步骤）
 
 ```bash
-# 创建前复权子表并计算全部技术指标
+# 补全每只股票从上市以来的全量日K线数据（默认 800 条之外的早期数据）
+python backfill_klines.py --skip-recent 0
+```
+
+> ⏱ 全量补全约 5000 只股票，耗时 1~2 小时。有断点续传，中断可重跑。
+>
+> ⚠️ **必须先补全历史数据，再算前复权指标**，否则早期除权除息事件会被跳过，导致前复权价格计算错误。
+
+#### 2d. 前复权指标预计算
+
+```bash
+# 第1步：创建 TDengine 超级表 kline_1d_adj（仅建表，不含数据）
 python calc_indicators_rest.py --init
+
+# 第2步：遍历全部股票，计算前复权价格 + MA/MACD/KDJ/ZXDQ/ZXDKX 并写入
 python calc_indicators_rest.py --all
 ```
+
+> `--init` 只建表，`--all` 才是真正的全量计算写入。分开两步是因为建表只需执行一次，后续除权除息后重算只需跑 `--all`。支持 `--code 000001` 单只重算和 `--resume` 断点续传。
 
 ### 3️⃣ 启动 Java 后端
 
@@ -252,10 +275,10 @@ npm run dev
 |------|------|----------|----------|
 | `init_stocks.py` | 一建初始化：建表 + 导入全量 A 股 + 历史 K 线 | **首次部署运行一次** | `--kline-only` 仅导K线；`--sync-xdxr` 仅同步除权除息 |
 | `daily_sync.py` | 每日收盘后增量同步：新股/更名/退市检测 + 日K线 | **每个交易日 15:40** | `--date 2025-01-15` 指定日期；`--sync-xdxr` 同步除权除息+重算指标 |
-| `calc_indicators_rest.py` | 前复权 K 线指标预计算（MA/MACD/KDJ/ZXDQ/ZXDKX） | 首次运行 + 除权除息后 | `--code 000001` 单只；`--all` 全量；`--dry-run` 试算；`--resume` 断点续传 |
+| `calc_indicators_rest.py` | 前复权 K 线指标预计算（MA/MACD/KDJ/ZXDQ/ZXDKX）。`--init` 建表，`--all` 全量计算 | 首次运行 + 除权除息后 | `--init` 建超级表；`--all` 全量计算；`--code 000001` 单只；`--resume` 断点续传 |
 | `scan_notifications.py` | 扫描自选股，基于状态机检测买卖信号并生成通知 | 每个交易日收盘后 | `--user 1` 指定用户；`--dry-run` 试运行不写入 |
 | `sync_xdxr.py` | 同步除权除息事件到 PG | 按需运行 | `--code 000001` 单只股票 |
-| `backfill_klines.py` | 补全 800 天之前的全部历史 K 线数据 | 按需运行 | `--code 000001` 单只；`--max-chunks 3`；`--dry-run` |
+| `backfill_klines.py` | 补全 800 天之前的全部历史 K 线数据（**必须在前复权之前运行**） | 首次部署必跑 | `--code 000001` 单只；`--max-chunks 3`；`--dry-run` |
 | `sync_industry.py` | 从新浪财经同步行业分类数据 | 按需运行 | 无参数 |
 
 ### 日常使用流程

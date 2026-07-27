@@ -32,6 +32,13 @@
       </div>
     </div>
 
+    <!-- 登录对话框 -->
+    <LoginDialog
+      :visible="loginDialogVisible"
+      @update:visible="loginDialogVisible = $event"
+      @login-success="onLoginSuccess"
+    />
+
     <!-- 股票信息头 -->
     <div ref="stockHeaderEl" class="stock-header" v-if="kline.stockInfo.value">
       <div class="stock-header__row1">
@@ -193,6 +200,8 @@ import { useStockSearch } from '../composables/useStockSearch'
 import { useKlineData } from '../composables/useKlineData'
 import { useChart } from '../composables/useChart'
 import { useDrawingTool } from '../composables/useDrawingTool'
+import { useAuthStore } from '../stores/auth'
+import LoginDialog from '../components/LoginDialog.vue'
 import DrawingPanel from '../components/DrawingPanel.vue'
 import { formatVolume, formatAmount } from '../composables/useFormat'
 import { groupApi, stockApi } from '../api'
@@ -262,6 +271,12 @@ async function _getWatchlistGroupId(): Promise<number> {
 
 async function onToggleWatchlist() {
   const code = selectedCode.value; if (!code || watchlistBusy.value) return
+
+  if (!store.isLoggedIn()) {
+    loginDialogVisible.value = true
+    return
+  }
+
   watchlistBusy.value = true
   try {
     const gid = await _getWatchlistGroupId()
@@ -277,6 +292,10 @@ async function onToggleWatchlist() {
 }
 
 async function _checkWatchlist(code: string) {
+  if (!store.isLoggedIn()) {
+    inWatchlist.value = false
+    return
+  }
   try {
     const gid = await _getWatchlistGroupId()
     const res: any = await groupApi.getStocks(gid)
@@ -319,6 +338,16 @@ const kline = useKlineData()
 const chart = useChart()
 const drawingTool = useDrawingTool(chart.instance, kline.klineData)
 const drawingBtnRef = useTemplateRef<HTMLElement>('drawingBtnRef')
+const store = useAuthStore()
+const loginDialogVisible = ref(false)
+
+// 登录成功后刷新收藏状态
+const onLoginSuccess = () => {
+  loginDialogVisible.value = false
+  if (selectedCode.value) {
+    _checkWatchlist(selectedCode.value)
+  }
+}
 
 // 画线面板定位：stock-header 右上角
 const drawingPanelStyle = computed(() => {
@@ -562,12 +591,14 @@ async function loadMoreOnZoom(params: any) {
 async function selectStock(s: any) {
   showDropdown.value = false; activeIndex.value = 0; keyword.value = `${s.code} ${s.name}`
   // 保存旧股票画线
-  if (selectedCode.value) drawingTool.saveDrawings(selectedCode.value)
+  if (selectedCode.value && store.isLoggedIn()) drawingTool.saveDrawings(selectedCode.value)
   selectedCode.value = s.code
   await kline.selectStock(s.code)
   crossIdx.value = -1
   drawingTool.exitDrawingMode()
-  await drawingTool.loadDrawings(s.code)
+  if (store.isLoggedIn()) {
+    await drawingTool.loadDrawings(s.code)
+  }
   
 renderChart()
   drawingTool.onZoom()
@@ -867,7 +898,7 @@ watch(() => route.query.code, (newCode) => {
 onUnmounted(() => {
   document.removeEventListener('click', onClickOutside)
   document.removeEventListener('keydown', onKeydown)
-  if (selectedCode.value) drawingTool.saveDrawings(selectedCode.value)
+  if (selectedCode.value && store.isLoggedIn()) drawingTool.saveDrawings(selectedCode.value)
   drawingTool.detach()
   // 移除 DOM 层事件
   if (chartEl.value) {
@@ -993,4 +1024,5 @@ onUnmounted(() => {
 .empty-state__mark { font-size: 56px; color: var(--text-tertiary); opacity: 0.3; margin-bottom: 20px; }
 .empty-state__title { font-size: 18px; font-weight: 600; color: var(--text-primary); margin-bottom: 8px; }
 .empty-state__desc { font-size: 14px; color: var(--text-tertiary); }
+
 </style>

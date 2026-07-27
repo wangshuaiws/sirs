@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { shallowRef } from 'vue'
+import { shallowRef, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { authApi } from '../api'
 import { useAuthStore } from '../stores/auth'
@@ -10,16 +10,36 @@ const loading = shallowRef(false)
 const errorMsg = shallowRef('')
 const username = shallowRef('')
 const password = shallowRef('')
+const captchaId = shallowRef('')
+const captchaCode = shallowRef('')
+const captchaImage = shallowRef('')
+
+// 刷新验证码
+async function refreshCaptcha() {
+  const res = await authApi.captcha()
+  captchaId.value = res.data.captchaId
+  captchaImage.value = res.data.captchaImage
+}
+
+// 初始化时获取验证码
+onMounted(() => {
+  refreshCaptcha()
+})
 
 async function handleLogin() {
   errorMsg.value = ''
-  if (!username.value.trim() || !password.value.trim()) {
-    errorMsg.value = '请输入用户名和密码'
+  if (!username.value.trim() || !password.value.trim() || !captchaCode.value.trim()) {
+    errorMsg.value = '请填写完整信息'
     return
   }
   loading.value = true
   try {
-    const res = await authApi.login({ username: username.value, password: password.value })
+    const res = await authApi.login({
+      username: username.value,
+      password: password.value,
+      captchaId: captchaId.value,
+      captchaCode: captchaCode.value
+    })
     store.setAuth(res.data.token, username.value)
     router.push('/')
   } catch (e: any) {
@@ -59,6 +79,26 @@ async function handleLogin() {
             placeholder="请输入密码"
             autocomplete="current-password"
           />
+        </div>
+        <div class="auth-form__group">
+          <label class="auth-form__label">验证码</label>
+          <div class="captcha-group">
+            <input
+              v-model="captchaCode"
+              type="text"
+              class="input-dark"
+              placeholder="请输入验证码"
+              maxlength="4"
+              autocomplete="off"
+            />
+            <img
+              :src="captchaImage"
+              @click="refreshCaptcha"
+              class="captcha-image"
+              alt="验证码"
+              title="点击刷新验证码"
+            />
+          </div>
         </div>
         <p class="auth-form__error" v-if="errorMsg">{{ errorMsg }}</p>
         <button type="submit" class="btn-primary auth-form__btn" :disabled="loading">
@@ -151,6 +191,27 @@ async function handleLogin() {
   width: 100%;
   padding: 11px;
   margin-top: 4px;
+}
+
+/* 验证码样式 */
+.captcha-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.captcha-group input {
+  flex: 1;
+}
+.captcha-image {
+  width: 100px;
+  height: 36px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  object-fit: contain;
+}
+.captcha-image:hover {
+  border-color: var(--accent);
 }
 
 .card-footer {

@@ -16,7 +16,6 @@ import org.springframework.util.DigestUtils;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
-import java.util.Base64;
 import java.util.UUID;
 
 @Service
@@ -47,8 +46,8 @@ public class AuthServiceImpl implements AuthService {
 
         redis.opsForValue().set(CAPTCHA_PREFIX + captchaId, code, CAPTCHA_TTL);
 
-        String base64 = "data:image/png;base64," +
-                Base64.getEncoder().encodeToString(captcha.toBase64().getBytes(StandardCharsets.UTF_8));
+        // easy-captcha 1.6.2 的 toBase64() 已经返回 "data:image/png;base64,..." 格式
+        String base64 = captcha.toBase64();
 
         log.debug("Generated captcha: id={}, code={}", captchaId, code);
         return new CaptchaResponse(captchaId, base64);
@@ -93,6 +92,17 @@ public class AuthServiceImpl implements AuthService {
 
     @Override
     public LoginResponse login(LoginRequest req) {
+        // 1. 校验验证码
+        String redisCode = redis.opsForValue().get(CAPTCHA_PREFIX + req.getCaptchaId());
+        if (redisCode == null) {
+            throw new BusinessException(ErrorCode.CAPTCHA_ERROR, "验证码已过期");
+        }
+        if (!redisCode.equals(req.getCaptchaCode().toLowerCase())) {
+            throw new BusinessException(ErrorCode.CAPTCHA_ERROR, "验证码错误");
+        }
+        redis.delete(CAPTCHA_PREFIX + req.getCaptchaId());
+
+        // 2. 原有登录逻辑
         User user = userMapper.selectOne(
                 new LambdaQueryWrapper<User>().eq(User::getUsername, req.getUsername()));
         if (user == null || user.getStatus() == 0) {

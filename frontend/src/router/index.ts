@@ -4,16 +4,6 @@ const router = createRouter({
   history: createWebHistory(),
   routes: [
     {
-      path: '/login',
-      name: 'Login',
-      component: () => import('../views/LoginView.vue'),
-    },
-    {
-      path: '/register',
-      name: 'Register',
-      component: () => import('../views/RegisterView.vue'),
-    },
-    {
       path: '/',
       name: 'Kline',
       component: () => import('../views/KlineView.vue'),

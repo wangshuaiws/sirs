@@ -58,6 +58,11 @@ export function useDrawingTool(
   let _renderRaf = 0
   let _docMouseUp: ((e: MouseEvent) => void) | null = null
 
+  // 拖拽已有画线状态
+  let _dragTargetIdx = -1
+  let _dragOriginAnchors: AnchorPoint[] | null = null
+  let _dragStartMouse: { x: number; y: number } | null = null
+
   // ── 坐标转换 ──
   function getChartDom(): HTMLElement | null {
     return chartInstance.value?.getDom() ?? null
@@ -120,6 +125,15 @@ export function useDrawingTool(
     const anchor = pixelToData(pos.x, pos.y)
     if (!anchor) return  // 不在 K线面板内
 
+    // 检测是否点击在已有画线上 → 进入拖拽模式
+    const nearIdx = findNearestDrawing(pos.x, pos.y, 10)
+    if (nearIdx >= 0) {
+      _dragTargetIdx = nearIdx
+      _dragOriginAnchors = drawings.value[nearIdx].anchorPoints.map(a => ({ ...a }))
+      _dragStartMouse = pos
+      return
+    }
+
     phase.value = 'dragging'
     pendingPixelAnchor.value = pos
     currentPixel.value = pos
@@ -136,6 +150,34 @@ export function useDrawingTool(
   }
 
   function handleMouseMove(e: any) {
+    // 拖拽已有画线
+    if (_dragTargetIdx >= 0) {
+      const pos = getEventChartPos(e)
+      if (!pos || !_dragStartMouse || !_dragOriginAnchors) return
+      const dx = pos.x - _dragStartMouse.x
+      const dy = pos.y - _dragStartMouse.y
+
+      const newAnchors = _dragOriginAnchors.map(a => {
+        const origPixel = dataToPixel(a)
+        if (!origPixel) return a
+        const newPixel = { x: origPixel.x + dx, y: origPixel.y + dy }
+        const inst = chartInstance.value
+        if (!inst) return a
+        const result = inst.convertFromPixel({ xAxisIndex: 0, yAxisIndex: 0 }, [newPixel.x, newPixel.y])
+        if (!result || !Array.isArray(result) || result.length < 2) return a
+        const rawLen = klineData.value.length
+        const di = Math.round(result[0])
+        if (di < 0 || di >= rawLen) return a
+        return { dataIndex: di, price: Number(result[1]) }
+      })
+
+      const updated = [...drawings.value]
+      updated[_dragTargetIdx] = { ...updated[_dragTargetIdx], anchorPoints: newAnchors }
+      drawings.value = updated
+      render()
+      return
+    }
+
     if (!drawingMode.value) {
       // 正常模式：更新 mouseY 供浮动面板使用（由 KlineView 处理）
       return
@@ -148,6 +190,15 @@ export function useDrawingTool(
   }
 
   function handleMouseUp(e: any) {
+    // 结束拖拽画线
+    if (_dragTargetIdx >= 0) {
+      _dragTargetIdx = -1
+      _dragOriginAnchors = null
+      _dragStartMouse = null
+      scheduleSave()
+      return
+    }
+
     if (!drawingMode.value || phase.value !== 'dragging') return
     phase.value = 'ready'
     currentPixel.value = null
@@ -216,6 +267,39 @@ export function useDrawingTool(
     scheduleSave()
   }
 
+  function findNearestDrawing(px: number, py: number, threshold: number): number {
+    if (drawings.value.length === 0) return -1
+    const inst = chartInstance.value
+    if (!inst) return -1
+    let minDist = Infinity
+    let minIdx = -1
+
+    for (let i = 0; i < drawings.value.length; i++) {
+      const d = drawings.value[i]
+      const pixels = d.anchorPoints.map(a => dataToPixel(a))
+
+      if (d.type === 'straight-line' || d.type === 'vertical-segment') {
+        if (pixels[0] && pixels[1]) {
+          const dist = pointToSegmentDist(px, py, pixels[0].x, pixels[0].y, pixels[1].x, pixels[1].y)
+          if (dist < minDist) { minDist = dist; minIdx = i }
+        }
+      } else {
+        if (pixels[0] && pixels[1]) {
+          const d1 = pointToSegmentDist(px, py, pixels[0].x, pixels[0].y, pixels[1].x, pixels[1].y)
+          if (d1 < minDist) { minDist = d1; minIdx = i }
+          const dc = pointToSegmentDist(px, py, pixels[0].x, pixels[0].y, pixels[0].x, pixels[1].y)
+          if (dc < minDist) { minDist = dc; minIdx = i }
+        }
+        if (pixels[0] && pixels[2]) {
+          const d2 = pointToSegmentDist(px, py, pixels[0].x, pixels[0].y, pixels[2].x, pixels[2].y)
+          if (d2 < minDist) { minDist = d2; minIdx = i }
+        }
+      }
+    }
+
+    return minDist < threshold ? minIdx : -1
+  }
+
   function handleContextMenu(e: any) {
     // 右击删除线条 —— 两种模式都生效
     const pos = getEventChartPos(e)
@@ -237,41 +321,10 @@ export function useDrawingTool(
       if (pos.y < h * 0.02 || pos.y > h * 0.42) return
     }
 
-    let minDist = Infinity
-    let minIdx = -1
-
-    for (let i = 0; i < drawings.value.length; i++) {
-      const d = drawings.value[i]
-      const apts = d.anchorPoints
-
-      // 将 anchorPoints 转为像素坐标
-      const pixels = apts.map(a => dataToPixel(a))
-
-      if (d.type === 'straight-line' || d.type === 'vertical-segment') {
-        // 单线段: anchorPoints[0] → anchorPoints[1]
-        if (pixels[0] && pixels[1]) {
-          const dist = pointToSegmentDist(pos.x, pos.y, pixels[0].x, pixels[0].y, pixels[1].x, pixels[1].y)
-          if (dist < minDist) { minDist = dist; minIdx = i }
-        }
-      } else {
-        // V / 倒V: apex(0) → tip(1)、apex(0) → tip(2)、中心竖线 apex(0) → (apex.x, tip.y)
-        if (pixels[0] && pixels[1]) {
-          const d1 = pointToSegmentDist(pos.x, pos.y, pixels[0].x, pixels[0].y, pixels[1].x, pixels[1].y)
-          if (d1 < minDist) { minDist = d1; minIdx = i }
-          // 中心竖线
-          const dc = pointToSegmentDist(pos.x, pos.y, pixels[0].x, pixels[0].y, pixels[0].x, pixels[1].y)
-          if (dc < minDist) { minDist = dc; minIdx = i }
-        }
-        if (pixels[0] && pixels[2]) {
-          const d2 = pointToSegmentDist(pos.x, pos.y, pixels[0].x, pixels[0].y, pixels[2].x, pixels[2].y)
-          if (d2 < minDist) { minDist = d2; minIdx = i }
-        }
-      }
-    }
-
-    if (minDist < 8 && minIdx >= 0) {
+    const nearIdx = findNearestDrawing(pos.x, pos.y, 8)
+    if (nearIdx >= 0) {
       const newDrawings = [...drawings.value]
-      newDrawings.splice(minIdx, 1)
+      newDrawings.splice(nearIdx, 1)
       drawings.value = newDrawings
       render()
       scheduleSave()
@@ -438,6 +491,9 @@ export function useDrawingTool(
   }
 
   function exitDrawingMode() {
+    _dragTargetIdx = -1
+    _dragOriginAnchors = null
+    _dragStartMouse = null
     drawingMode.value = false
     phase.value = 'ready'
     pendingPixelAnchor.value = null
@@ -514,6 +570,9 @@ export function useDrawingTool(
   }
 
   function detach() {
+    _dragTargetIdx = -1
+    _dragOriginAnchors = null
+    _dragStartMouse = null
     if (_renderRaf) {
       cancelAnimationFrame(_renderRaf)
       _renderRaf = 0

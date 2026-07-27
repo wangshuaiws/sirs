@@ -190,7 +190,7 @@ async function loadGroupsAndSelectWatchlist() {
                 </thead>
                 <tbody>
                   <tr v-for="(s, i) in pagedStocks" :key="s.code" :class="{ 'stock-table__row--stripe': i % 2 === 1 }">
-                    <td><span class="stock-table__code">{{ s.code }}</span></td>
+                    <td><span class="stock-table__code" @click="viewKline(s.code)">{{ s.code }}</span></td>
                     <td class="stock-table__name">{{ s.name }}</td>
                     <td class="stock-table__industry">{{ s.industry || '-' }}</td>
                     <td>
@@ -532,6 +532,10 @@ async function loadGroupsAndSelectWatchlist() {
   color: var(--accent);
   font-size: 13px;
   font-weight: 500;
+  cursor: pointer;
+}
+.stock-table__code:hover {
+  text-decoration: underline;
 }
 .stock-table__name {
   font-weight: 500;

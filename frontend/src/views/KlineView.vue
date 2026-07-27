@@ -369,6 +369,10 @@ watch(() => drawingTool.drawingMode.value, (on) => {
   } else {
     chart.instance.value.setOption({ axisPointer: { show: true, link: [{ xAxisIndex: 'all' }] } })
   }
+  // 画线模式切换时同步更新 dataZoom 拖拽行为
+  chart.instance.value.setOption({
+    dataZoom: [{ moveOnMouseMove: !on }],
+  })
 })
 
 const selectedCode = shallowRef('')
@@ -816,7 +820,7 @@ function renderChart(keepZoom?: { start: number; end: number }) {
       start: dz.start, end: dz.end,
       minSpan: 5, maxSpan: 80,           // 限制缩放幅度
       zoomOnMouseWheel: 'ctrl',          // Ctrl+滚轮才缩放，避免触控板误触
-      moveOnMouseMove: true,             // 拖拽平移
+      moveOnMouseMove: !drawingTool.drawingMode.value, // 画线模式禁止拖拽平移
     }],
   } as any, true)  // notMerge: true — 全量替换 chart option
   // 首次渲染后用可见范围更新附图 Y 轴 min/max

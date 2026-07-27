@@ -96,7 +96,8 @@ def save_checkpoint(code: str, path: str):
 
 def _ma_np(closes: np.ndarray, n: int) -> np.ndarray:
     result = np.full(len(closes), np.nan)
-    result[n - 1 :] = np.convolve(closes, np.ones(n) / n, mode="valid")
+    if len(closes) >= n:
+        result[n - 1 :] = np.convolve(closes, np.ones(n) / n, mode="valid")
     return result
 
 

@@ -2,9 +2,21 @@
 import { computed, shallowRef, ref, watch, onMounted, onUnmounted } from 'vue'
 import { useNotifications, TABS, TYPE_LABEL } from '../composables/useNotifications'
 import { useStockSearch } from '../composables/useGroupManager'
+import { useAuthStore } from '../stores/auth'
+import LoginDialog from '../components/LoginDialog.vue'
 
 const vm = useNotifications()
 const { keyword: searchKeyword, results: searchResults, search: doSearch } = useStockSearch()
+const store = useAuthStore()
+const loginDialogVisible = ref(false)
+const loginDialog = ref<InstanceType<typeof LoginDialog> | null>(null)
+
+// 登录成功后回调
+const onLoginSuccess = () => {
+  // 刷新通知数据
+  vm.loadList()
+  vm.loadStats()
+}
 
 // 日期选择器 ref — 用于 showPicker()
 const dateFromRef = ref<HTMLInputElement | null>(null)
@@ -95,6 +107,9 @@ function unreadBadge(key: string): string {
 
 onMounted(async () => {
   document.addEventListener('click', onDocClick)
+  if (!store.isLoggedIn()) {
+    return // 未登录由 App.vue 导航守卫拦截，不加载数据
+  }
   await Promise.all([vm.loadList(), vm.loadStats()])
 })
 
@@ -262,6 +277,13 @@ onUnmounted(() => {
       </section>
     </div>
   </div>
+
+  <!-- 登录对话框 -->
+  <LoginDialog
+    :visible="loginDialogVisible"
+    @update:visible="loginDialogVisible = $event"
+    @login-success="onLoginSuccess"
+  />
 </template>
 
 <style scoped>

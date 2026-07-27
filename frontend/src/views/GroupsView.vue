@@ -2,10 +2,21 @@
 import { computed, shallowRef, ref, nextTick, watch, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useGroupManager, useStockSearch } from '../composables/useGroupManager'
+import { useAuthStore } from '../stores/auth'
+import LoginDialog from '../components/LoginDialog.vue'
 
 const router = useRouter()
 const gm = useGroupManager()
 const stockSearch = useStockSearch()
+const store = useAuthStore()
+const loginDialogVisible = ref(false)
+const loginDialog = ref<InstanceType<typeof LoginDialog> | null>(null)
+
+// 登录成功后回调
+const onLoginSuccess = () => {
+  // 刷新分组数据
+  gm.loadGroups()
+}
 
 // 添加股票弹框
 const showAddStock = shallowRef(false)
@@ -42,12 +53,20 @@ const saving = shallowRef(false)
 const groupForm = shallowRef({ name: '', description: '' })
 
 function showCreateDialog() {
+  if (!store.isLoggedIn()) {
+    loginDialogVisible.value = true
+    return
+  }
   editingGroup.value = null
   groupForm.value = { name: '', description: '' }
   showDialog.value = true
 }
 
 function editGroup(g: any) {
+  if (!store.isLoggedIn()) {
+    loginDialogVisible.value = true
+    return
+  }
   editingGroup.value = g
   groupForm.value = { name: g.name, description: g.description || '' }
   showDialog.value = true
@@ -90,7 +109,15 @@ function viewKline(code: string) {
   router.push({ name: 'Kline', query: { code } })
 }
 
-async function initPage() {
+// 页面初始化时检查登录状态
+onMounted(async () => {
+  if (!store.isLoggedIn()) {
+    return // 未登录由 App.vue 导航守卫拦截，不加载数据
+  }
+  await loadGroupsAndSelectWatchlist()
+})
+
+async function loadGroupsAndSelectWatchlist() {
   await gm.loadGroups()
   // 默认选中自选股，不存在则创建
   let watchlist = gm.groups.value.find((g: any) => g.name === '自选股')
@@ -103,8 +130,6 @@ async function initPage() {
     await gm.selectGroup(watchlist)
   }
 }
-
-onMounted(() => initPage())
 </script>
 
 <template>
@@ -267,6 +292,13 @@ onMounted(() => initPage())
       </div>
     </div>
   </div>
+
+  <!-- 登录对话框 -->
+  <LoginDialog
+    :visible="loginDialogVisible"
+    @update:visible="loginDialogVisible = $event"
+    @login-success="onLoginSuccess"
+  />
 </template>
 
 <style scoped>
@@ -633,4 +665,5 @@ onMounted(() => initPage())
   min-width: 70px;
   font-weight: 500;
 }
+
 </style>

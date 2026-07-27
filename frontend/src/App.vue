@@ -1,7 +1,7 @@
 <template>
   <div id="app-root">
     <!-- 顶部导航栏 -->
-    <header v-if="showNav" class="nav-header">
+    <header class="nav-header">
       <div class="nav-inner">
         <div class="nav-brand">
           <span class="brand-icon">◈</span>
@@ -12,55 +12,107 @@
             <span class="nav-link__icon">◫</span>
             <span>K线图</span>
           </router-link>
-          <router-link to="/groups" class="nav-link" active-class="nav-link--active">
+          <span class="nav-link" :class="{ 'nav-link--active': route.path === '/groups' }" @click="goToGroups">
             <span class="nav-link__icon">⊞</span>
             <span>分组管理</span>
-          </router-link>
-          <router-link to="/notifications" class="nav-link" active-class="nav-link--active">
+          </span>
+          <span class="nav-link" :class="{ 'nav-link--active': route.path === '/notifications' }" @click="goToNotifications">
             <span class="nav-link__icon">⚡</span>
             <span>通知中心</span>
-          </router-link>
+          </span>
         </nav>
         <div class="nav-user">
-          <div class="user-avatar">{{ store.username.charAt(0).toUpperCase() }}</div>
-          <span class="user-name">{{ store.username }}</span>
-          <button class="btn-logout" @click="logout">
+          <div class="user-avatar" v-if="store.isLoggedIn()">{{ store.username.charAt(0).toUpperCase() }}</div>
+          <span class="user-name" v-if="store.isLoggedIn()">{{ store.username }}</span>
+          <button class="btn-logout" v-if="store.isLoggedIn()" @click="logout">
             <span class="btn-logout__icon">⏻</span>
             退出
           </button>
+          <template v-else>
+            <button class="btn-login" @click="showLoginDialog = true">登录</button>
+            <button class="btn-register" @click="showRegisterDialog = true">注册</button>
+          </template>
         </div>
       </div>
     </header>
 
-    <main class="main-content" :class="{ 'main--full': !showNav }">
+    <!-- 登录对话框 -->
+    <LoginDialog
+      v-if="showLoginDialog"
+      :visible="showLoginDialog"
+      @update:visible="showLoginDialog = $event"
+      @login-success="onLoginSuccess"
+    />
+
+    <!-- 注册对话框 -->
+    <RegisterDialog
+      v-if="showRegisterDialog"
+      :visible="showRegisterDialog"
+      @update:visible="showRegisterDialog = $event"
+      @register-success="onRegisterSuccess"
+    />
+
+    <main class="main-content">
       <router-view />
     </main>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
+import { ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from './stores/auth'
-import { authApi } from './api'
+import LoginDialog from './components/LoginDialog.vue'
+import RegisterDialog from './components/RegisterDialog.vue'
 
 const route = useRoute()
 const router = useRouter()
 const store = useAuthStore()
-
-const showNav = computed(() => route.path !== '/login' && route.path !== '/register')
-
-// 开发环境：启动时自动用默认用户登录（覆盖旧 token）
-onMounted(async () => {
-  try {
-    const res: any = await authApi.login({ username: 'admin', password: 'admin123' })
-    store.setAuth(res.data.token, 'admin')
-  } catch { /* 后端未启动时静默失败 */ }
-})
+const showLoginDialog = ref(false)
+const showRegisterDialog = ref(false)
 
 function logout() {
   store.clearAuth()
-  router.push('/login')
+  router.push('/')
+}
+
+// 登录成功回调
+const onLoginSuccess = () => {
+  showLoginDialog.value = false
+  // 如果当前在分组/通知页，登录后刷新数据
+  if (route.path === '/groups') {
+    // 触发 GroupsView 重新加载 — 通过路由刷新
+    router.replace('/groups')
+  } else if (route.path === '/notifications') {
+    router.replace('/notifications')
+  }
+}
+
+// 注册成功回调
+const onRegisterSuccess = () => {
+  showRegisterDialog.value = false
+  if (route.path === '/groups') {
+    router.replace('/groups')
+  } else if (route.path === '/notifications') {
+    router.replace('/notifications')
+  }
+}
+
+// 导航守卫：未登录则弹登录框
+function goToGroups() {
+  if (store.isLoggedIn()) {
+    router.push('/groups')
+  } else {
+    showLoginDialog.value = true
+  }
+}
+
+function goToNotifications() {
+  if (store.isLoggedIn()) {
+    router.push('/notifications')
+  } else {
+    showLoginDialog.value = true
+  }
 }
 </script>
 
@@ -120,6 +172,8 @@ function logout() {
   color: var(--text-secondary);
   transition: all var(--duration-fast) var(--ease-out);
   text-decoration: none;
+  cursor: pointer;
+  user-select: none;
 }
 .nav-link:hover {
   color: var(--text-primary);
@@ -186,6 +240,40 @@ function logout() {
   font-size: 13px;
 }
 
+/* ── Auth Buttons ── */
+.btn-login, .btn-register {
+  padding: 5px 12px;
+  border-radius: var(--radius-md);
+  font-size: 12px;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-out);
+  border: 1px solid var(--border-default);
+}
+
+.btn-login {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+.btn-login:hover {
+  opacity: 0.9;
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.btn-register {
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.btn-register:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+  border-color: var(--border-default);
+}
+
 /* ── Main Content ── */
 .main-content {
   flex: 1;
@@ -193,9 +281,5 @@ function logout() {
   max-width: 1400px;
   margin: 0 auto;
   width: 100%;
-}
-.main--full {
-  padding: 0;
-  max-width: none;
 }
 </style>

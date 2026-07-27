@@ -74,6 +74,10 @@ export function useNotifications() {
       })
       notifications.value = res.data.records || []
       total.value = res.data.total || 0
+    } catch (error) {
+      console.error('加载通知列表失败:', error)
+      notifications.value = []
+      total.value = 0
     } finally {
       loading.value = false
     }
@@ -85,7 +89,10 @@ export function useNotifications() {
       if (res.data) {
         stats.value = res.data as NotificationStats
       }
-    } catch { /* 静默失败 */ }
+    } catch (error) {
+      console.error('加载通知统计失败:', error)
+      stats.value = emptyStats()
+    }
   }
 
   function switchTab(tab: string) {

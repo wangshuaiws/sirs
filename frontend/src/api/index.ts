@@ -36,7 +36,7 @@ export const authApi = {
   captcha: () => http.get('/auth/captcha'),
   register: (data: { username: string; password: string; captchaId: string; captchaCode: string }) =>
     http.post('/auth/register', data),
-  login: (data: { username: string; password: string }) =>
+  login: (data: { username: string; password: string; captchaId: string; captchaCode: string }) =>
     http.post('/auth/login', data),
 }
 

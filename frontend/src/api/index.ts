@@ -62,6 +62,7 @@ export const groupApi = {
   getStocks: (id: number) => http.get(`/groups/${id}/stocks`),
   addStock: (id: number, code: string) => http.post(`/groups/${id}/stocks`, { code }),
   removeStock: (id: number, code: string) => http.delete(`/groups/${id}/stocks/${code}`),
+  checkWatchlist: (code: string) => http.get(`/groups/watchlist/${code}`),
 }
 
 // ── 通知 ──

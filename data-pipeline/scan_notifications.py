@@ -360,10 +360,10 @@ def get_watchlist_stocks(cur, user_id=None):
 
 
 def fetch_kline_data(code):
-    """从 TDengine 获取最近 N 天的日K线，返回按时间升序的 list[dict]"""
+    """从 TDengine 获取最近 N 天的日K线及预计算指标"""
     sql = (
-        f"SELECT ts, open, high, low, close "
-        f"FROM sirs.k_1d_{code} "
+        f"SELECT ts, open, high, low, close, zxdq, zxdkx, kdj_j "
+        f"FROM sirs.k_1d_adj_{code} "
         f"ORDER BY ts DESC LIMIT {NOTIFICATION_KLINE_DAYS}"
     )
     try:
@@ -385,7 +385,8 @@ def fetch_kline_data(code):
 
     klines = []
     for row in data_rows:
-        # row[0]=ts, row[1]=open, row[2]=high, row[3]=low, row[4]=close
+        # row[0]=ts, row[1]=open, row[2]=high, row[3]=low, row[4]=close,
+        # row[5]=zxdq, row[6]=zxdkx, row[7]=kdj_j
         try:
             klines.append({
                 "ts": str(row[0])[:10],
@@ -393,6 +394,9 @@ def fetch_kline_data(code):
                 "high": float(row[2]) if row[2] is not None else 0.0,
                 "low": float(row[3]) if row[3] is not None else 0.0,
                 "close": float(row[4]) if row[4] is not None else 0.0,
+                "zxdq": float(row[5]) if row[5] is not None else None,
+                "zxdkx": float(row[6]) if row[6] is not None else None,
+                "kdj_j": float(row[7]) if row[7] is not None else None,
             })
         except (ValueError, TypeError, IndexError):
             continue
@@ -448,24 +452,14 @@ def scan_all_users(target_user_id=None, dry_run=False):
             if not klines:
                 continue
 
-            # 提取指标所需序列
-            closes = [k["close"] for k in klines]
-            highs = [k["high"] for k in klines]
-            lows = [k["low"] for k in klines]
-
-            # 计算指标
-            zxdq = calc_zxdq(closes)
-            zxdkx = calc_zxdkx(closes)
-            kdj = calc_kdj(highs, lows, closes)
-
-            # 取最新两个值
-            latest_close = closes[-1]
-            prev_close = closes[-2] if len(closes) >= 2 else None
-            latest_zxdq = zxdq[-1]
-            prev_zxdq = zxdq[-2] if len(zxdq) >= 2 else None
-            latest_zxdkx = zxdkx[-1]
-            prev_zxdkx = zxdkx[-2] if len(zxdkx) >= 2 else None
-            latest_j = kdj["j"][-1]
+            # 取最新两个值（直接从 adj 表预计算字段读取）
+            latest_close = klines[-1]["close"]
+            prev_close = klines[-2]["close"] if len(klines) >= 2 else None
+            latest_zxdq = klines[-1]["zxdq"]
+            prev_zxdq = klines[-2]["zxdq"] if len(klines) >= 2 else None
+            latest_zxdkx = klines[-1]["zxdkx"]
+            prev_zxdkx = klines[-2]["zxdkx"] if len(klines) >= 2 else None
+            latest_j = klines[-1]["kdj_j"]
 
             # 获取当前状态
             state_row = get_or_create_state(cur, uid, code)

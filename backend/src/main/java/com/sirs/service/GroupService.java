@@ -12,4 +12,5 @@ public interface GroupService {
     List<Map<String, Object>> getGroupStocks(Long userId, Long groupId);
     void addStockToGroup(Long userId, Long groupId, String stockCode);
     void removeStockFromGroup(Long userId, Long groupId, String stockCode);
+    boolean isInWatchlist(Long userId, String stockCode);
 }

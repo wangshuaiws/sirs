@@ -150,6 +150,21 @@ public class GroupServiceImpl implements GroupService {
         }
     }
 
+    @Override
+    public boolean isInWatchlist(Long userId, String stockCode) {
+        StockGroup watchlist = groupMapper.selectOne(
+                new LambdaQueryWrapper<StockGroup>()
+                        .eq(StockGroup::getUserId, userId)
+                        .eq(StockGroup::getName, "自选股"));
+        if (watchlist == null) return false;
+
+        Long count = groupStockMapper.selectCount(
+                new LambdaQueryWrapper<GroupStock>()
+                        .eq(GroupStock::getGroupId, watchlist.getId())
+                        .eq(GroupStock::getStockCode, stockCode));
+        return count > 0;
+    }
+
     /**
      * 将股票同步到用户的「自选股」默认分组（不存在则创建）
      */

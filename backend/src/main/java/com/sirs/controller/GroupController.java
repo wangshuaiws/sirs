@@ -71,4 +71,12 @@ public class GroupController {
         groupService.removeStockFromGroup(getUserId(request), id, code);
         return Result.success();
     }
+
+    @GetMapping("/watchlist/{code}")
+    public Result<Map<String, Object>> checkWatchlist(@PathVariable String code,
+                                                       HttpServletRequest request) {
+        Long userId = getUserId(request);
+        boolean inWatchlist = groupService.isInWatchlist(userId, code);
+        return Result.success(Map.of("inWatchlist", inWatchlist));
+    }
 }

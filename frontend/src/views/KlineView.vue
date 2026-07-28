@@ -297,10 +297,8 @@ async function _checkWatchlist(code: string) {
     return
   }
   try {
-    const gid = await _getWatchlistGroupId()
-    const res: any = await groupApi.getStocks(gid)
-    const stocks: any[] = res.data ?? []
-    inWatchlist.value = stocks.some((s: any) => s.code === code)
+    const res: any = await groupApi.checkWatchlist(code)
+    inWatchlist.value = res.data?.inWatchlist ?? false
   } catch { inWatchlist.value = false }
 }
 
@@ -593,29 +591,26 @@ async function loadMoreOnZoom(params: any) {
    }
  }
 async function selectStock(s: any) {
-  showDropdown.value = false; activeIndex.value = 0; keyword.value = `${s.code} ${s.name}`
-  // 保存旧股票画线
+  // 支持传 code 字符串（selectStockByCode 路径）或对象（搜索下拉路径）
+  const code = typeof s === 'string' ? s : s.code
+  const name = typeof s === 'string' ? code : s.name
+  showDropdown.value = false; activeIndex.value = 0; keyword.value = typeof s === 'string' ? code : `${s.code} ${s.name}`
   if (selectedCode.value && store.isLoggedIn()) drawingTool.saveDrawings(selectedCode.value)
-  selectedCode.value = s.code
-  await kline.selectStock(s.code)
+  selectedCode.value = code
+  await kline.selectStock(code)
   crossIdx.value = -1
   drawingTool.exitDrawingMode()
   if (store.isLoggedIn()) {
-    await drawingTool.loadDrawings(s.code)
+    await drawingTool.loadDrawings(code)
   }
-  
-renderChart()
+  renderChart()
   drawingTool.onZoom()
-  _checkWatchlist(s.code)
+  _checkWatchlist(code)
 }
 
 async function selectStockByCode(code: string) {
-  try {
-    const res = await stockApi.getByCode(code)
-    if (res.data) {
-      await selectStock(res.data)
-    }
-  } catch { /* ignore */ }
+  // 直接传 code，由 kline.selectStock 内部调用 stockApi.getByCode，避免重复
+  await selectStock(code)
 }
 
 async function onSwitchPeriod(p: string) { if (!selectedCode.value) return; drawingTool.clearAll(); drawingTool.exitDrawingMode(); await kline.switchPeriod(selectedCode.value, p); crossIdx.value = -1; renderChart() }
@@ -902,7 +897,6 @@ watch(() => route.query.code, (newCode) => {
 onUnmounted(() => {
   document.removeEventListener('click', onClickOutside)
   document.removeEventListener('keydown', onKeydown)
-  if (selectedCode.value && store.isLoggedIn()) drawingTool.saveDrawings(selectedCode.value)
   drawingTool.detach()
   // 移除 DOM 层事件
   if (chartEl.value) {

@@ -5,16 +5,22 @@ export function useGroupManager() {
   const groups = shallowRef<any[]>([])
   const activeGroup = shallowRef<any>(null)
   const groupStocks = shallowRef<any[]>([])
+  const groupStockTotal = shallowRef(0)
+  let _currentPage = 1
+  let _pageSize = 10
 
   async function loadGroups() {
     const res = await groupApi.list()
     groups.value = (res.data || []).map((g: any) => ({ ...g, _stockCount: 0 }))
   }
 
-  async function selectGroup(g: any) {
+  async function selectGroup(g: any, page = 1, size = 10) {
     activeGroup.value = g
-    const res = await groupApi.getStocks(g.id)
-    groupStocks.value = res.data || []
+    _currentPage = page
+    _pageSize = size
+    const res = await groupApi.getStocks(g.id, page, size)
+    groupStocks.value = res.data?.records || []
+    groupStockTotal.value = res.data?.total || 0
   }
 
   async function saveGroup(name: string, description: string, editingId?: number) {
@@ -38,17 +44,17 @@ export function useGroupManager() {
   async function removeStock(code: string) {
     if (!activeGroup.value) return
     await groupApi.removeStock(activeGroup.value.id, code)
-    await selectGroup(activeGroup.value)
+    await selectGroup(activeGroup.value, _currentPage, _pageSize)
   }
 
   async function addStock(code: string) {
     if (!activeGroup.value) return
     await groupApi.addStock(activeGroup.value.id, code)
-    await selectGroup(activeGroup.value)
+    await selectGroup(activeGroup.value, _currentPage, _pageSize)
   }
 
   return {
-    groups, activeGroup, groupStocks,
+    groups, activeGroup, groupStocks, groupStockTotal,
     loadGroups, selectGroup,
     saveGroup, deleteGroup,
     removeStock, addStock,

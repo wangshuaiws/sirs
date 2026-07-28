@@ -15,7 +15,7 @@ import sys
 import json
 import argparse
 import fcntl
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from collections import defaultdict
 
 import psycopg2
@@ -45,101 +45,6 @@ def acquire_lock():
         print("[WARN] 已有 scan_notifications 正在运行，退出")
         sys.exit(0)
     return fp
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# 指标计算（与前端 src/composables/useFormat.ts 对齐）
-# ═══════════════════════════════════════════════════════════════════════
-
-def calc_ma(values, n):
-    """简单移动平均 MA(C, n)"""
-    if len(values) < n:
-        return [None] * len(values)
-    result = [None] * len(values)
-    for i in range(n - 1, len(values)):
-        window = values[i - n + 1:i + 1]
-        result[i] = round(sum(window) / n, 2)
-    return result
-
-
-def _ema_of(values, n):
-    """EMA 核心计算 — 与通达信对齐：首日收盘价初始化"""
-    if len(values) < n:
-        return [None] * len(values)
-    k = 2.0 / (n + 1)
-    result = [None] * len(values)
-    for i in range(n - 1, len(values)):
-        if i == n - 1:
-            result[i] = values[i]  # 通达信：首日收盘价作为初始 EMA
-        else:
-            result[i] = values[i] * k + result[i - 1] * (1 - k)
-    return result
-
-
-def calc_ema(values, n):
-    """EMA(C, n) — 从 values 列表计算 EMA"""
-    return _ema_of(values, n)
-
-
-def calc_zxdq(closes):
-    """ZXDQ: EMA(EMA(C,10),10)，白色"""
-    ema10 = _ema_of(closes, 10)
-    # 收集有效 EMA10 值，再算一次 EMA10
-    vals = []
-    idxs = []
-    for i, v in enumerate(ema10):
-        if v is not None:
-            vals.append(v)
-            idxs.append(i)
-    ema2 = _ema_of(vals, 10)
-    result = [None] * len(closes)
-    for j, idx in enumerate(idxs):
-        if ema2[j] is not None:
-            result[idx] = round(ema2[j], 2)
-    return result
-
-
-def calc_zxdkx(closes):
-    """ZXDKX: (MA(C,14)+MA(C,28)+MA(C,57)+MA(C,114))/4，黄色"""
-    m14 = calc_ma(closes, 14)
-    m28 = calc_ma(closes, 28)
-    m57 = calc_ma(closes, 57)
-    m114 = calc_ma(closes, 114)
-    result = [None] * len(closes)
-    for i in range(len(closes)):
-        if m14[i] is not None and m28[i] is not None and m57[i] is not None and m114[i] is not None:
-            result[i] = round((m14[i] + m28[i] + m57[i] + m114[i]) / 4, 2)
-    return result
-
-
-def calc_kdj(highs, lows, closes, n=9, m1=3, m2=3):
-    """KDJ(9,3,3) — 与前端 useFormat.ts 的 calcKDJ 完全对齐"""
-    length = len(closes)
-    k_vals = [None] * length
-    d_vals = [None] * length
-    j_vals = [None] * length
-
-    for i in range(n - 1, length):
-        start = i - n + 1
-        h_max = max(highs[start:i + 1])
-        l_min = min(lows[start:i + 1])
-        if h_max == l_min:
-            rsv = 50.0
-        else:
-            rsv = (closes[i] - l_min) / (h_max - l_min) * 100.0
-
-        prev_k = 50.0 if i == n - 1 else (k_vals[i - 1] or 50.0)
-        prev_d = 50.0 if i == n - 1 else (d_vals[i - 1] or 50.0)
-
-        cur_k = (2.0 / m1) * prev_k + (1.0 / m1) * rsv   # SMA(X,N=3,M=1)
-        cur_d = (2.0 / m2) * prev_d + (1.0 / m2) * cur_k
-        cur_j = 3.0 * cur_k - 2.0 * cur_d
-
-        k_vals[i] = round(cur_k, 2)
-        d_vals[i] = round(cur_d, 2)
-        j_vals[i] = round(cur_j, 2)
-
-    return {"k": k_vals, "d": d_vals, "j": j_vals}
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -404,14 +309,121 @@ def fetch_kline_data(code):
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# 全市场金叉扫描
+# ═══════════════════════════════════════════════════════════════════════
+
+def scan_market_golden_cross(cur, today_str, users, dry_run=False):
+    """全市场扫描金叉（zxdq >= zxdkx 且昨日 <=），为每个用户生成发现通知"""
+    from calc_indicators import td_query_rest
+
+    # 取最近 7 天数据（确保足够覆盖到前一个交易日）
+    from_dt = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+    rows = td_query_rest(
+        f"SELECT tbname, ts, zxdq, zxdkx FROM sirs.kline_1d_adj "
+        f"WHERE ts >= '{from_dt}' ORDER BY tbname, ts"
+    )
+    if not rows:
+        print("[Market] 无数据")
+        return 0
+
+    # 按股票分组，取最新 2 条
+    stock_bars = {}
+    for r in rows:
+        tbname = r.get("tbname", "")
+        code = tbname.replace("k_1d_adj_", "") if tbname.startswith("k_1d_adj_") else ""
+        if not code:
+            continue
+        if code not in stock_bars:
+            stock_bars[code] = []
+        stock_bars[code].append((str(r["ts"])[:10], r.get("zxdq"), r.get("zxdkx")))
+
+    # 获取股票名称映射
+    import psycopg2
+    from config import PG_CONFIG as _PG
+    _conn = psycopg2.connect(**_PG)
+    _c = _conn.cursor()
+    _c.execute("SELECT code, name FROM stocks")
+    code_name = {r[0]: r[1] for r in _c.fetchall()}
+    _c.close(); _conn.close()
+
+    printed_total = False
+    today_golden = []
+
+    for code, bars in stock_bars.items():
+        if len(bars) < 2:
+            continue
+        bars.sort(key=lambda x: x[0])
+        latest, prev = bars[-1], bars[-2]
+
+        # 只判断今天的
+        if latest[0] != today_str:
+            continue
+
+        z, x = latest[1], latest[2]
+        pz, px = prev[1], prev[2]
+        if any(v is None for v in (z, x, pz, px)):
+            continue
+        if not (float(pz) <= float(px) and float(z) >= float(x)):
+            continue
+
+        today_golden.append((code, float(z), float(x)))
+
+    if not today_golden:
+        print("[Market] 今日无金叉")
+        return 0
+
+    print(f"[Market] 今日金叉 {len(today_golden)} 只")
+    if not printed_total:
+        printed_total = True
+
+    count = 0
+    for code, z_val, x_val in today_golden:
+        for uid, uname in users:
+            state_row = get_or_create_state(cur, uid, code)
+            if state_row["signal_state"] != "NONE":
+                continue  # 已处理过，跳过
+
+            if dry_run:
+                print(f"\n[DRY-RUN] [Market] user={uid} {code} 金叉 (zxdq={z_val:.2f} zxdkx={x_val:.2f})")
+                continue
+
+            update_state(cur, uid, code, "HAS_GOLDEN_CROSS",
+                         datetime.now().date(), False, False)
+            stock_name = code_name.get(code, "")
+            notif = {
+                "type": "GOLDEN_CROSS",
+                "message": "扫描该股票今日金叉确认，关注后续走势",
+                "detail": {"zxdq": z_val, "zxdkx": x_val, "cross_date": today_str},
+            }
+            insert_notification(cur, uid, code, stock_name, notif, datetime.now())
+            count += 1
+
+    if dry_run:
+        print(f"\n[DRY-RUN] [Market] 金叉扫描完成（未写入）")
+    else:
+        print(f"[Market] 金叉扫描完成，{count} 条新通知")
+    return count
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # 主流程
 # ═══════════════════════════════════════════════════════════════════════
 
 def scan_all_users(target_user_id=None, dry_run=False):
-    """扫描所有用户的自选股，检测通知信号"""
+    """全市场金叉扫描 + 自选股状态机"""
     pg_conn = get_pg_conn()
     cur = pg_conn.cursor()
 
+    today_str = datetime.now().strftime("%Y-%m-%d")
+
+    # 0. 全市场金叉扫描（无论 dry_run 都执行，dry_run 仅打印）
+    cur.execute("SELECT id, username FROM users ORDER BY id")
+    all_users = cur.fetchall()
+    scan_market_golden_cross(cur, today_str, all_users, dry_run=dry_run)
+    if not dry_run:
+        pg_conn.commit()
+
+    # 1. 自选股状态机扫描
     watchlist_map = get_watchlist_stocks(cur, user_id=target_user_id)
     if not watchlist_map:
         print("[INFO] 没有找到任何用户的自选股数据")

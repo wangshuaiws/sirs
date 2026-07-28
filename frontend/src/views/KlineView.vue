@@ -42,8 +42,10 @@
     <!-- 股票信息头 -->
     <div ref="stockHeaderEl" class="stock-header" v-if="kline.stockInfo.value">
       <div class="stock-header__row1">
+        <button class="nav-arrow" :class="{ 'nav-arrow--on': !!prevCode }" :disabled="!prevCode" @click="goPrev">◀</button>
         <h2 class="stock-header__name">{{ kline.stockInfo.value.name }}</h2>
         <span class="stock-header__code">{{ kline.stockInfo.value.code }}</span>
+        <button class="nav-arrow" :class="{ 'nav-arrow--on': !!nextCode }" :disabled="!nextCode" @click="goNext">▶</button>
         <button class="watchlist-btn" :class="{ 'watchlist-btn--added': inWatchlist, 'watchlist-btn--busy': watchlistBusy }"
           :title="inWatchlist ? '取消自选' : '加入自选'" @click="onToggleWatchlist" :disabled="watchlistBusy">
           <svg width="18" height="18" viewBox="0 0 24 24" :fill="inWatchlist ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="1.8">
@@ -195,7 +197,7 @@
 
 <script setup lang="ts">
 import { shallowRef, ref, computed, onMounted, onUnmounted, watch, useTemplateRef } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useStockSearch } from '../composables/useStockSearch'
 import { useKlineData } from '../composables/useKlineData'
 import { useChart } from '../composables/useChart'
@@ -205,6 +207,7 @@ import LoginDialog from '../components/LoginDialog.vue'
 import DrawingPanel from '../components/DrawingPanel.vue'
 import { formatVolume, formatAmount } from '../composables/useFormat'
 import { groupApi, stockApi } from '../api'
+import { getNeighbors } from '../composables/useStockNavigation'
 
 const periods = [{ label: '日K', value: 'daily' }, { label: '周K', value: 'weekly' }, { label: '月K', value: 'monthly' }]
 
@@ -330,6 +333,7 @@ const floatPanelStyle = computed(() => {
   return { position: 'fixed' as const, left: left + 'px', top: top + 'px', zIndex: 9999 }
 })
 
+const router = useRouter()
 const route = useRoute()
 const { keyword, results: searchResults, search } = useStockSearch()
 const kline = useKlineData()
@@ -378,6 +382,17 @@ const showDropdown = shallowRef(false)
 const activeIndex = shallowRef(0)
 const chartEl = useTemplateRef<HTMLElement>('chartEl')
 const searchInputRef = useTemplateRef<HTMLInputElement>('searchInputRef')
+
+// ── 左右箭头导航（来自分组/通知列表缓存） ──
+const prevCode = computed(() => getNeighbors(selectedCode.value).prev)
+const nextCode = computed(() => getNeighbors(selectedCode.value).next)
+
+function goPrev() {
+  if (prevCode.value) router.push({ query: { code: prevCode.value } })
+}
+function goNext() {
+  if (nextCode.value) router.push({ query: { code: nextCode.value } })
+}
 
 const filteredResults = computed(() => {
   const source = keyword.value ? searchResults.value.filter((s: any) => s.code.includes(keyword.value) || s.name.includes(keyword.value)) : searchResults.value
@@ -884,9 +899,15 @@ onMounted(() => {
 })
 
 function onKeydown(e: KeyboardEvent) {
-  if (e.key === 'Escape' && drawingTool.drawingMode.value) {
-    drawingTool.exitDrawingMode()
+  // 画线模式只处理 Escape
+  if (drawingTool.drawingMode.value) {
+    if (e.key === 'Escape') drawingTool.exitDrawingMode()
+    return
   }
+  // 左右箭头换股票（搜索框聚焦时不触发）
+  if ((e.target as HTMLElement).closest('.search-box__input')) return
+  if (e.key === 'ArrowLeft' && prevCode.value) { router.push({ query: { code: prevCode.value } }) }
+  if (e.key === 'ArrowRight' && nextCode.value) { router.push({ query: { code: nextCode.value } }) }
 }
 
 watch(() => route.query.code, (newCode) => {
@@ -948,6 +969,10 @@ onUnmounted(() => {
 .watchlist-btn:hover { color: #f59e0b; background: rgba(245,158,11,0.08); }
 .watchlist-btn--added { color: #f59e0b; border-color: transparent; }
 .watchlist-btn--busy { opacity: 0.5; pointer-events: none; }
+.nav-arrow { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border: 1px solid var(--border-default); border-radius: var(--radius-md); background: transparent; color: var(--text-tertiary); font-size: 12px; cursor: pointer; transition: all 0.15s; }
+.nav-arrow--on { color: var(--text-primary); border-color: var(--border-emphasis); }
+.nav-arrow--on:hover { background: var(--bg-hover); color: var(--accent); border-color: var(--accent); }
+.nav-arrow:disabled { opacity: 0.2; cursor: default; pointer-events: none; }
 .stock-header__row2 { display: flex; align-items: center; gap: 20px; }
 .stock-header__price-section { display: flex; align-items: baseline; gap: 8px; }
 .stock-header__price { font-family: var(--font-mono); font-size: 24px; font-weight: 700; color: var(--text-primary); }

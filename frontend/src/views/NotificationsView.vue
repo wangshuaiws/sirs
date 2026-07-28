@@ -1,14 +1,24 @@
 <script setup lang="ts">
 import { computed, shallowRef, ref, watch, onMounted, onUnmounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { useNotifications, TABS, TYPE_LABEL } from '../composables/useNotifications'
 import { useStockSearch } from '../composables/useGroupManager'
 import { useAuthStore } from '../stores/auth'
+import { setStockCodes } from '../composables/useStockNavigation'
 import LoginDialog from '../components/LoginDialog.vue'
 
+const router = useRouter()
 const vm = useNotifications()
 const { keyword: searchKeyword, results: searchResults, search: doSearch } = useStockSearch()
 const store = useAuthStore()
 const loginDialogVisible = ref(false)
+
+function goToKline(code: string, name: string) {
+  // 缓存当前通知列表的去重股票代码，用于 K线图左右箭头导航
+  const codes = [...new Set(vm.notifications.value.map((n: any) => n.stockCode))]
+  setStockCodes(codes)
+  router.push({ name: 'Kline', query: { code } })
+}
 const loginDialog = ref<InstanceType<typeof LoginDialog> | null>(null)
 
 // 登录成功后回调
@@ -149,67 +159,49 @@ onUnmounted(() => {
         </div>
       </aside>
 
-      <!-- 右侧面板 -->
-      <section class="notify-panel">
-        <!-- 筛选栏 -->
-        <div class="notify-panel__filters">
-          <!-- 股票搜索（复用 K线图 模式） -->
-          <div class="search-box">
+      <!-- 右侧面板（复用分组管理样式） -->
+      <section class="stock-panel">
+        <div class="stock-panel__head" style="display:flex;align-items:center;gap:12px;flex-shrink:0">
+          <div class="search-box" style="width:240px;flex-shrink:0">
             <span class="search-box__icon">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
             </span>
-            <input
-              v-model="searchKeyword"
-              @keydown="onSearchKeydown"
-              type="text"
-              class="search-box__input"
-              placeholder="搜索代码或名称"
-            />
+            <input v-model="searchKeyword" @keydown="onSearchKeydown" type="text" class="search-box__input" placeholder="搜索代码或名称" />
             <div class="search-box__dropdown" v-if="showDropdown && (filteredResults.length || searchKeyword)">
               <template v-if="filteredResults.length">
-                <div
-                  v-for="(s, i) in filteredResults"
-                  :key="s.code"
-                  class="search-box__item"
+                <div v-for="(s, i) in filteredResults" :key="s.code" class="search-box__item"
                   :class="{ 'search-box__item--active': i === activeIndex }"
-                  @click="selectStock(s)"
-                  @mouseenter="activeIndex = i"
-                >
+                  @click="selectStock(s)" @mouseenter="activeIndex = i">
                   <span class="search-box__code">{{ s.code }}</span>
                   <span class="search-box__name">{{ s.name }}</span>
-                  <span :class="['badge', s.exchange === 'SH' ? 'badge--sh' : 'badge--sz']">
-                    {{ s.exchange === 'SH' ? '沪' : '深' }}
-                  </span>
+                  <span :class="['badge', s.exchange === 'SH' ? 'badge--sh' : 'badge--sz']">{{ s.exchange === 'SH' ? '沪' : '深' }}</span>
                 </div>
               </template>
               <div class="search-box__empty" v-else-if="searchKeyword">未找到匹配股票</div>
             </div>
           </div>
 
-          <div class="filter-date-group">
-            <div class="date-picker" :class="{ 'date-picker--empty': !vm.dateFrom.value }" @click="openDatePicker('from')">
+          <div class="filter-date-group" style="display:flex;align-items:center;gap:8px">
+            <div class="date-picker" :class="{ 'date-picker--empty': !vm.dateFrom.value }" @click="openDatePicker('from')" style="height:32px;padding:0 10px;display:flex;align-items:center;background:var(--bg-root);border:1px solid var(--border-default);border-radius:var(--radius-md);cursor:pointer;gap:6px">
               <span class="date-picker__label">{{ vm.dateFrom.value || '起始日期' }}</span>
-              <span class="date-picker__icon">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
-              </span>
-              <input ref="dateFromRef" v-model="vm.dateFrom.value" type="date" class="date-picker__input" />
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+              <input ref="dateFromRef" v-model="vm.dateFrom.value" type="date" style="position:absolute;inset:0;opacity:0;cursor:pointer" />
             </div>
-            <span class="filter-sep">—</span>
-            <div class="date-picker" :class="{ 'date-picker--empty': !vm.dateTo.value }" @click="openDatePicker('to')">
+            <span class="filter-sep" style="color:var(--text-tertiary)">—</span>
+            <div class="date-picker" :class="{ 'date-picker--empty': !vm.dateTo.value }" @click="openDatePicker('to')" style="height:32px;padding:0 10px;display:flex;align-items:center;background:var(--bg-root);border:1px solid var(--border-default);border-radius:var(--radius-md);cursor:pointer;gap:6px">
               <span class="date-picker__label">{{ vm.dateTo.value || '截止日期' }}</span>
-              <span class="date-picker__icon">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
-              </span>
-              <input ref="dateToRef" v-model="vm.dateTo.value" type="date" class="date-picker__input" />
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+              <input ref="dateToRef" v-model="vm.dateTo.value" type="date" style="position:absolute;inset:0;opacity:0;cursor:pointer" />
             </div>
           </div>
 
-          <button class="btn-primary" @click="vm.onSearch()">查询</button>
+          <button class="btn-primary" style="padding:4px 14px;font-size:12px" @click="vm.onSearch()">查询</button>
         </div>
 
-        <!-- 通知列表 + 分页 -->
-        <div class="notify-panel__body" v-if="vm.notifications.value.length">
-          <table class="notify-table">
+        <template v-if="vm.notifications.value.length">
+          <div class="stock-panel__body">
+            <div class="stock-table-wrap">
+              <table class="stock-table">
             <thead>
               <tr>
                 <th class="col-type">类型</th>
@@ -225,24 +217,21 @@ onUnmounted(() => {
                 :key="n.id"
                 :class="{
                   'notify-row--unread': !n.isRead,
-                  'notify-table__row--stripe': i % 2 === 1,
+                  'stock-table__row--stripe': i % 2 === 1,
                 }"
               >
-                <td>
+                <td class="col-type">
                   <span class="type-badge" :class="`type-badge--${n.type}`">
                     {{ TYPE_LABEL[n.type] || n.type }}
                   </span>
                 </td>
-                <td>
-                  <router-link
-                    :to="{ name: 'Kline', query: { code: n.stockCode } }"
-                    class="stock-link"
-                  >
+                <td class="col-stock">
+                  <span class="stock-link" @click="goToKline(n.stockCode, n.stockName)" style="cursor:pointer">
                     <span class="stock-link__code">{{ n.stockCode }}</span>
                     <span class="stock-link__name">{{ n.stockName }}</span>
-                  </router-link>
+                  </span>
                 </td>
-                <td class="msg-cell">{{ n.message }}</td>
+                <td class="col-msg">{{ n.message }}</td>
                 <td class="time-cell">{{ formatTime(n.createdAt) }}</td>
                 <td>
                   <button
@@ -254,24 +243,20 @@ onUnmounted(() => {
                 </td>
               </tr>
             </tbody>
-          </table>
-
-          <div class="notify-panel__pagination" v-if="vm.total.value > vm.pageSize.value">
-            <el-pagination
-              size="small"
-              background
-              :current-page="vm.page.value"
-              :page-size="vm.pageSize.value"
-              :total="vm.total.value"
-              layout="prev, pager, next"
-              @current-change="vm.onPageChange"
-            />
+            </table>
+            </div>
+            <div class="stock-panel__pagination" v-if="vm.total.value > vm.pageSize.value">
+              <el-pagination size="small" background v-model:current-page="vm.page"
+                v-model:page-size="vm.pageSize" :page-sizes="[10,20,30,50]"
+                :total="vm.total.value"
+                layout="sizes, prev, pager, next"
+                @size-change="vm.onSizeChange" @current-change="vm.onPageChange" />
+            </div>
           </div>
-        </div>
+        </template>
 
-        <!-- 空状态 -->
-        <div class="notify-panel__empty" v-else>
-          <div class="notify-panel__empty-icon">◈</div>
+        <div class="stock-panel__empty" v-else>
+          <p style="font-size:44px;opacity:0.3;margin-bottom:10px">◈</p>
           <p>{{ vm.activeTab.value === 'all' ? '暂无通知' : '该分类暂无通知' }}</p>
         </div>
       </section>
@@ -394,29 +379,6 @@ onUnmounted(() => {
   font-weight: 700;
   font-family: var(--font-mono);
   line-height: 1;
-  flex-shrink: 0;
-}
-
-/* ════════════════════════════════════════════
-   Right Panel
-   ════════════════════════════════════════════ */
-.notify-panel {
-  flex: 1;
-  background: var(--bg-surface);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-lg);
-  padding: 16px 22px 14px;
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-
-/* ── Filters ── */
-.notify-panel__filters {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  margin-bottom: 10px;
   flex-shrink: 0;
 }
 
@@ -584,20 +546,25 @@ onUnmounted(() => {
   flex-shrink: 0;
 }
 
-/* ── Table ── */
-.notify-panel__body {
+/* ── 复用 stock-panel 基础样式（scoped 隔离，不继承自 GroupsView） ── */
+.stock-panel {
   flex: 1;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  padding: 16px 22px 14px;
   display: flex;
   flex-direction: column;
-  overflow-y: auto;
-  overflow-x: hidden;
-  min-height: 0;
+  min-width: 0;
 }
-.notify-table {
+
+/* ── 复用 stock-table 基础样式（scoped 隔离） ── */
+.stock-table {
   width: 100%;
   border-collapse: collapse;
+  background: transparent;
 }
-.notify-table th {
+.stock-table th {
   text-align: left;
   padding: 7px 12px;
   font-size: 11px;
@@ -606,39 +573,92 @@ onUnmounted(() => {
   text-transform: uppercase;
   letter-spacing: 0.5px;
   border-bottom: 1px solid var(--border-default);
-  background: var(--bg-surface);
   position: sticky;
   top: 0;
+  background: transparent;
 }
-.notify-table td {
-  padding: 8px 12px;
+.stock-table td {
+  padding: 9px 12px;
   font-size: 13px;
   border-bottom: 1px solid var(--border-subtle);
-  vertical-align: middle;
+  background: transparent;
 }
-.notify-table tbody tr {
+.stock-table tbody tr {
   transition: background var(--duration-fast);
 }
-.notify-table tbody tr:hover {
+.stock-table tbody tr:hover {
   background: var(--bg-hover);
 }
-.notify-table__row--stripe {
-  background: rgba(255, 255, 255, 0.006);
+.stock-table__row--stripe {
+  background: rgba(255, 255, 255, 0.008);
 }
+.stock-panel__body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+}
+.stock-table-wrap {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background: transparent;
+}
+.stock-panel__pagination {
+  display: flex;
+  justify-content: flex-end;
+  padding: 8px 0 2px;
+  margin-top: auto;
+  background: var(--bg-surface);
+  border-top: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+}
+
+/* ── Column alignment ── */
+.stock-table th.col-type, .stock-table td.col-type { text-align: center; }
+.stock-table th.col-stock, .stock-table td.col-stock { text-align: center; }
+.stock-table th.col-msg, .stock-table td.col-msg { text-align: center; }
+.stock-table th.col-time, .stock-table td.time-cell { text-align: center; }
+.stock-table th.col-action, .stock-table td:last-child { text-align: center; }
+
+.stock-panel__pagination :deep(.el-pagination__sizes) { margin-right: 0; }
+.stock-panel__pagination :deep(.el-select) { width: 90px; }
+.stock-panel__pagination :deep(.el-select .el-input__wrapper) {
+  background: transparent;
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.06) inset;
+  font-size: 12px;
+  height: 26px;
+}
+.stock-panel__pagination :deep(.el-select .el-input__wrapper:hover) {
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.12) inset;
+}
+.stock-panel__pagination :deep(.el-select .el-input__wrapper.is-focused) {
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.15) inset;
+}
+.stock-panel__pagination :deep(.el-select .el-input__inner) {
+  color: var(--text-primary);
+}
+
+/* ── Empty state ── */
+.stock-panel__empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-tertiary);
+  font-size: 14px;
+  gap: 10px;
+}
+
+/* ── Unread row highlight ── */
 .notify-row--unread {
-  background: rgba(59, 140, 227, 0.04);
+  background: transparent;
 }
 .notify-row--unread:hover {
   background: var(--bg-hover) !important;
 }
-
-.col-type { width: 90px; }
-.col-stock { width: 140px; }
-.col-msg { }
-.notify-table th.col-time,
-.time-cell { width: 120px; text-align: center; }
-.notify-table th.col-action,
-.notify-table td:last-child { width: 110px; text-align: center; }
 
 /* ── Type Badge ── */
 .type-badge {
@@ -694,32 +714,5 @@ onUnmounted(() => {
 .read-label {
   font-size: 12px;
   color: var(--text-tertiary);
-}
-
-/* ── Empty ── */
-.notify-panel__empty {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-tertiary);
-  font-size: 14px;
-  gap: 10px;
-}
-.notify-panel__empty-icon {
-  font-size: 44px;
-  opacity: 0.3;
-}
-
-/* ── Pagination ── */
-.notify-panel__pagination {
-  display: flex;
-  justify-content: flex-end;
-  padding: 8px 0 2px;
-  margin-top: auto;
-  background: var(--bg-surface);
-  border-top: 1px solid var(--border-subtle);
-  flex-shrink: 0;
 }
 </style>

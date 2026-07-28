@@ -1,6 +1,9 @@
 package com.sirs.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.sirs.dto.GroupStockVO;
+import com.sirs.dto.PageResult;
 import com.sirs.entity.GroupStock;
 import com.sirs.entity.Stock;
 import com.sirs.entity.StockGroup;
@@ -8,10 +11,12 @@ import com.sirs.mapper.GroupStockMapper;
 import com.sirs.mapper.StockGroupMapper;
 import com.sirs.mapper.StockMapper;
 import com.sirs.service.GroupService;
+import org.springframework.beans.BeanUtils;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.*;
+import java.util.stream.Collectors;
 
 @Service
 public class GroupServiceImpl implements GroupService {
@@ -84,39 +89,37 @@ public class GroupServiceImpl implements GroupService {
     }
 
     @Override
-    public List<Map<String, Object>> getGroupStocks(Long userId, Long groupId) {
+    public PageResult<GroupStockVO> getGroupStocks(Long userId, Long groupId, int page, int size) {
         getAndVerifyOwner(userId, groupId);
 
-        List<GroupStock> relations = groupStockMapper.selectList(
+        Page<GroupStock> groupStockPage = new Page<>(page, size);
+        Page<GroupStock> groupStockResult = groupStockMapper.selectPage(groupStockPage,
                 new LambdaQueryWrapper<GroupStock>().eq(GroupStock::getGroupId, groupId));
 
-        if (relations.isEmpty()) {
-            return List.of();
-        }
-
-        List<String> codes = relations.stream().map(GroupStock::getStockCode).toList();
-        List<Stock> stocks = stockMapper.selectList(
+        List<String> codes = groupStockResult.getRecords().stream().map(GroupStock::getStockCode).toList();
+        List<Stock> stocks = codes.isEmpty() ? List.of() : stockMapper.selectList(
                 new LambdaQueryWrapper<Stock>().in(Stock::getCode, codes));
-
         Map<String, Stock> stockMap = new HashMap<>();
         for (Stock s : stocks) {
             stockMap.put(s.getCode(), s);
         }
+        List<GroupStockVO> groupStockVOList = new ArrayList<>();
+        groupStockVOList = groupStockResult.getRecords().stream().map(groupStock -> {
+            GroupStockVO groupStockVo = new GroupStockVO();
+            BeanUtils.copyProperties(groupStock, groupStockVo);
+            groupStockVo.setCode(groupStock.getStockCode());
+            groupStockVo.setName(stockMap.get(groupStock.getStockCode()).getName());
+            groupStockVo.setExchange(stockMap.get(groupStock.getStockCode()).getExchange());
+            groupStockVo.setIndustry(stockMap.get(groupStock.getStockCode()).getIndustry());
 
-        List<Map<String, Object>> result = new ArrayList<>();
-        for (GroupStock gs : relations) {
-            Stock s = stockMap.get(gs.getStockCode());
-            if (s != null) {
-                Map<String, Object> item = new LinkedHashMap<>();
-                item.put("code", s.getCode());
-                item.put("name", s.getName());
-                item.put("exchange", s.getExchange());
-                item.put("industry", s.getIndustry());
-                item.put("addedAt", gs.getAddedAt());
-                result.add(item);
-            }
-        }
-        return result;
+            return groupStockVo;
+        }).collect(Collectors.toList());
+        return new PageResult<>(
+                groupStockVOList,
+                groupStockResult.getTotal(),
+                page,
+                size
+        );
     }
 
     @Override

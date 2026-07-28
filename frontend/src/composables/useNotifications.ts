@@ -111,6 +111,12 @@ export function useNotifications() {
     loadList()
   }
 
+  function onSizeChange(size: number) {
+    pageSize.value = size
+    page.value = 1
+    loadList()
+  }
+
   async function markAsRead(id: number) {
     try {
       await notificationApi.markRead(id)
@@ -137,7 +143,7 @@ export function useNotifications() {
   return {
     notifications, stats, total, page, pageSize, loading,
     activeTab, keyword, dateFrom, dateTo,
-    loadList, loadStats, switchTab, onSearch, onPageChange,
+    loadList, loadStats, switchTab, onSearch, onPageChange, onSizeChange,
     markAsRead, markAllAsRead, unreadFor,
   }
 }

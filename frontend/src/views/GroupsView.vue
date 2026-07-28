@@ -34,17 +34,20 @@ watch(showAddStock, async (v) => {
   }
 })
 
-// 分页
+// 分页（后端控制）
 const stockPage = shallowRef(1)
-const stockPageSize = 10
+const stockPageSize = shallowRef(10)
 
-const pagedStocks = computed(() => {
-  const list = gm.groupStocks.value
-  const start = (stockPage.value - 1) * stockPageSize
-  return list.slice(start, start + stockPageSize)
-})
+function onStockPageChange(p: number) {
+  stockPage.value = p
+  if (gm.activeGroup.value) gm.selectGroup(gm.activeGroup.value, p, stockPageSize.value)
+}
 
-const stockTotal = computed(() => gm.groupStocks.value.length)
+function onStockSizeChange(size: number) {
+  stockPageSize.value = size
+  stockPage.value = 1
+  if (gm.activeGroup.value) gm.selectGroup(gm.activeGroup.value, 1, size)
+}
 
 // 对话框状态
 const showDialog = shallowRef(false)
@@ -102,10 +105,13 @@ async function confirmAddStock() {
 
 async function switchGroup(g: any) {
   stockPage.value = 1
-  await gm.selectGroup(g)
+  await gm.selectGroup(g, 1, stockPageSize.value)
 }
 
-function viewKline(code: string) {
+async function viewKline(code: string) {
+  // 缓存当前分组股票列表，用于 K线图左右箭头导航
+  const { setStockCodes } = await import('../composables/useStockNavigation')
+  setStockCodes(gm.groupStocks.value.map((s: any) => s.code))
   router.push({ name: 'Kline', query: { code } })
 }
 
@@ -127,7 +133,7 @@ async function loadGroupsAndSelectWatchlist() {
     watchlist = gm.groups.value.find((g: any) => g.name === '自选股')
   }
   if (watchlist) {
-    await gm.selectGroup(watchlist)
+    await gm.selectGroup(watchlist, 1, stockPageSize.value)
   }
 }
 </script>
@@ -178,6 +184,7 @@ async function loadGroupsAndSelectWatchlist() {
 
           <template v-if="gm.groupStocks.value.length">
             <div class="stock-panel__body">
+              <div class="stock-table-wrap">
               <table class="stock-table">
                 <thead>
                   <tr>
@@ -189,7 +196,7 @@ async function loadGroupsAndSelectWatchlist() {
                   </tr>
                 </thead>
                 <tbody>
-                  <tr v-for="(s, i) in pagedStocks" :key="s.code" :class="{ 'stock-table__row--stripe': i % 2 === 1 }">
+                  <tr v-for="(s, i) in gm.groupStocks.value" :key="s.code" :class="{ 'stock-table__row--stripe': i % 2 === 1 }">
                     <td><span class="stock-table__code" @click="viewKline(s.code)">{{ s.code }}</span></td>
                     <td class="stock-table__name">{{ s.name }}</td>
                     <td class="stock-table__industry">{{ s.industry || '-' }}</td>
@@ -202,16 +209,19 @@ async function loadGroupsAndSelectWatchlist() {
                   </tr>
                 </tbody>
               </table>
+              </div>
 
-              <div class="stock-panel__pagination" v-if="stockTotal > stockPageSize">
+              <div class="stock-panel__pagination" v-if="gm.groupStockTotal.value > stockPageSize">
                 <el-pagination
                   size="small"
                   background
-                  :current-page="stockPage"
-                  :page-size="stockPageSize"
-                  :total="stockTotal"
-                  layout="prev, pager, next"
-                  @current-change="(p: number) => stockPage = p"
+                  v-model:current-page="stockPage"
+                  v-model:page-size="stockPageSize"
+                  :page-sizes="[10, 20, 30, 50]"
+                  :total="gm.groupStockTotal.value"
+                  layout="sizes, prev, pager, next"
+                  @size-change="onStockSizeChange"
+                  @current-change="onStockPageChange"
                 />
               </div>
             </div>
@@ -480,12 +490,14 @@ async function loadGroupsAndSelectWatchlist() {
   flex: 1;
   display: flex;
   flex-direction: column;
-  overflow-y: auto;
-  overflow-x: hidden;
+  overflow: hidden;
   min-height: 0;
 }
-.stock-panel__body .stock-table {
-  margin-bottom: 0;
+.stock-table-wrap {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background: transparent;
 }
 .stock-panel__pagination {
   display: flex;
@@ -496,9 +508,27 @@ async function loadGroupsAndSelectWatchlist() {
   border-top: 1px solid var(--border-subtle);
   flex-shrink: 0;
 }
+.stock-panel__pagination :deep(.el-pagination__sizes) { margin-right: 0; }
+.stock-panel__pagination :deep(.el-select) { width: 90px; }
+.stock-panel__pagination :deep(.el-select .el-input__wrapper) {
+  background: transparent;
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.06) inset;
+  font-size: 12px;
+  height: 26px;
+}
+.stock-panel__pagination :deep(.el-select .el-input__wrapper:hover) {
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.12) inset;
+}
+.stock-panel__pagination :deep(.el-select .el-input__wrapper.is-focused) {
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.15) inset;
+}
+.stock-panel__pagination :deep(.el-select .el-input__inner) {
+  color: var(--text-primary);
+}
 .stock-table {
   width: 100%;
   border-collapse: collapse;
+  background: transparent;
 }
 .stock-table th {
   text-align: left;
@@ -511,7 +541,7 @@ async function loadGroupsAndSelectWatchlist() {
   border-bottom: 1px solid var(--border-default);
   position: sticky;
   top: 0;
-  background: var(--bg-surface);
+  background: transparent;
 }
 .stock-table td {
   padding: 7px 12px;

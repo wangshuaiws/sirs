@@ -51,9 +51,11 @@ public class GroupController {
     }
 
     @GetMapping("/{id}/stocks")
-    public Result<List<Map<String, Object>>> getStocks(@PathVariable Long id,
-                                                        HttpServletRequest request) {
-        return Result.success(groupService.getGroupStocks(getUserId(request), id));
+    public Result<PageResult<GroupStockVO>> getStocks(@PathVariable Long id,
+                                                              @RequestParam(defaultValue = "1") int page,
+                                                              @RequestParam(defaultValue = "10") int size,
+                                                              HttpServletRequest request) {
+        return Result.success(groupService.getGroupStocks(getUserId(request), id, page, size));
     }
 
     @PostMapping("/{id}/stocks")

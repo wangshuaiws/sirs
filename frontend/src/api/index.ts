@@ -59,7 +59,8 @@ export const groupApi = {
   update: (id: number, data: { name: string; description?: string }) =>
     http.put(`/groups/${id}`, data),
   delete: (id: number) => http.delete(`/groups/${id}`),
-  getStocks: (id: number) => http.get(`/groups/${id}/stocks`),
+  getStocks: (id: number, page = 1, size = 10) =>
+    http.get(`/groups/${id}/stocks`, { params: { page, size } }),
   addStock: (id: number, code: string) => http.post(`/groups/${id}/stocks`, { code }),
   removeStock: (id: number, code: string) => http.delete(`/groups/${id}/stocks/${code}`),
   checkWatchlist: (code: string) => http.get(`/groups/watchlist/${code}`),

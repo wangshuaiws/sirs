@@ -52,6 +52,10 @@
             <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
           </svg>
         </button>
+        <div class="stock-header__meta" v-if="kline.stockInfo.value.industry || kline.stockInfo.value.peTtm">
+          <div class="stock-header__meta-item" v-if="kline.stockInfo.value.peTtm"><span class="stock-header__meta-label">市盈率</span><span class="stock-header__meta-value">{{ kline.stockInfo.value.peTtm.toFixed(2) }}</span></div>
+          <div class="stock-header__meta-item" v-if="kline.stockInfo.value.industry"><span class="stock-header__meta-label">行业</span><span class="stock-header__meta-value">{{ kline.stockInfo.value.industry }}</span></div>
+        </div>
       </div>
       <div class="stock-header__row2" v-if="kline.latestPrice.value">
         <div class="stock-header__price-section">
@@ -442,8 +446,11 @@ const currentBarChange = computed(() => {
   if (!currentBar.value) return '—'
   const prev = kline.klineData.value[atIdx() - 1]
   if (!prev) return '—'
-  const diff = Number(currentBar.value.close) - Number(prev.close)
-  return `${diff >= 0 ? '+' : ''}${diff.toFixed(2)}`
+  const prevClose = Number(prev.close)
+  if (!prevClose) return '—'
+  const diff = Number(currentBar.value.close) - prevClose
+  const pct = (diff / prevClose) * 100
+  return `${diff >= 0 ? '+' : ''}${pct.toFixed(2)}%`
 })
 
 const currentBarPriceClass = computed(() => {
@@ -983,7 +990,7 @@ onUnmounted(() => {
 .stock-header__change-pct { font-family: var(--font-mono); font-size: 12px; font-weight: 500; }
 .stock-header__change-pct.price-up { color: #e63535; } .stock-header__change-pct.price-down { color: #1aad19; }
 .stock-header__meta { display: flex; align-items: center; gap: 20px; margin-left: auto; }
-.stock-header__meta-item { display: flex; flex-direction: column; gap: 1px; }
+.stock-header__meta-item { display: flex; flex-direction: column; gap: 1px; min-width: 72px; }
 .stock-header__meta-label { font-size: 10px; color: var(--text-tertiary); font-weight: 500; }
 .stock-header__meta-value { font-family: var(--font-mono); font-size: 13px; font-weight: 600; color: var(--text-primary); }
 

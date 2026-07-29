@@ -16,6 +16,7 @@ public class Stock {
     private String exchange;
     private String market;
     private String industry;
+    private Double peTtm;
     private LocalDate listedDate;
     private Boolean isActive;
 

@@ -106,6 +106,10 @@ def init_pg_tables():
     """)
     conn.commit()
 
+    # 幂等添加 pe_ttm 列（动态市盈率）
+    cur.execute("ALTER TABLE stocks ADD COLUMN IF NOT EXISTS pe_ttm DOUBLE PRECISION;")
+    conn.commit()
+
     cur.close()
     conn.close()
     print("[PG] stocks / xdxr_events 表就绪")

@@ -590,6 +590,13 @@ def main():
     elif args.skip_adj:
         print("[Skip] --skip-adj 已指定，跳过前复权计算")
 
+    # 5. 同步动态市盈率
+    try:
+        from sync_pe import sync_all as sync_pe
+        sync_pe()
+    except Exception as e:
+        print(f"[WARN] PE 同步异常: {e}")
+
     print("[Sync] 全部完成")
 
 

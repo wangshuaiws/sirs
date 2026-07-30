@@ -7,6 +7,7 @@ import { drawingApi } from '../api'
 export interface AnchorPoint {
   dataIndex: number
   price: number
+  ts?: string   // 交易日 "YYYY-MM-DD"，用于跨日/跨会话重新定位
 }
 
 export interface Drawing {
@@ -96,7 +97,8 @@ export function useDrawingTool(
     const dataIndex = Math.round(result[0])
     const raw = klineData.value
     if (dataIndex < 0 || dataIndex >= raw.length) return null
-    return { dataIndex, price: Number(result[1]) }
+    const ts = raw[dataIndex]?.ts ?? undefined
+    return { dataIndex, price: Number(result[1]), ts }
   }
 
   function dataToPixel(a: AnchorPoint): { x: number; y: number } | null {
@@ -114,6 +116,26 @@ export function useDrawingTool(
     return {
       dataIndex: Math.round(2 * apex.dataIndex - dragEnd.dataIndex),
       price: dragEnd.price,
+      ts: apex.ts,
+    }
+  }
+
+  /**
+   * 重新绑定画线锚点的 dataIndex：通过 ts（交易日）从当前 klineData 中反查索引。
+   * 无 ts 的锚点跳过（向后兼容旧数据），ts 匹配失败的保持原 dataIndex 不变。
+   */
+  function rebindDrawings() {
+    const data = klineData.value
+    if (!data.length) return
+    for (const drawing of drawings.value) {
+      for (const anchor of drawing.anchorPoints) {
+        if (anchor.ts) {
+          const idx = data.findIndex((d: any) => d.ts === anchor.ts)
+          if (idx >= 0) {
+            anchor.dataIndex = idx
+          }
+        }
+      }
     }
   }
 
@@ -168,7 +190,7 @@ export function useDrawingTool(
         const rawLen = klineData.value.length
         const di = Math.round(result[0])
         if (di < 0 || di >= rawLen) return a
-        return { dataIndex: di, price: Number(result[1]) }
+        return { dataIndex: di, price: Number(result[1]), ts: klineData.value[di]?.ts ?? a.ts }
       })
 
       const updated = [...drawings.value]
@@ -244,8 +266,8 @@ export function useDrawingTool(
         type: 'vertical-segment',
         color: selectedColor.value,
         anchorPoints: [
-          { dataIndex: startAnchor.dataIndex, price: startAnchor.price },
-          { dataIndex: startAnchor.dataIndex, price: endAnchor.price },
+          { dataIndex: startAnchor.dataIndex, price: startAnchor.price, ts: startAnchor.ts },
+          { dataIndex: startAnchor.dataIndex, price: endAnchor.price, ts: startAnchor.ts },
         ],
       }
     } else {
@@ -343,6 +365,7 @@ export function useDrawingTool(
   function render() {
     const inst = chartInstance.value
     if (!inst) return
+    rebindDrawings()
     const elements = buildGraphicElements()
     inst.setOption({ graphic: { elements } }, { replaceMerge: ['graphic'] })
   }
@@ -554,6 +577,7 @@ export function useDrawingTool(
       } else {
         drawings.value = []
       }
+      rebindDrawings()
     } catch {
       drawings.value = []
     }

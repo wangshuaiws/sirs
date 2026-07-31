@@ -113,10 +113,12 @@ export function useDrawingTool(
   }
 
   function computeMirroredAnchor(apex: AnchorPoint, dragEnd: AnchorPoint): AnchorPoint {
+    const di = Math.round(2 * apex.dataIndex - dragEnd.dataIndex)
+    const raw = klineData.value
     return {
-      dataIndex: Math.round(2 * apex.dataIndex - dragEnd.dataIndex),
+      dataIndex: di,
       price: dragEnd.price,
-      ts: apex.ts,
+      ts: raw[di]?.ts ?? apex.ts,   // 镜像索引对应的交易日（兜底 apex.ts）
     }
   }
 
@@ -135,6 +137,14 @@ export function useDrawingTool(
             anchor.dataIndex = idx
           }
         }
+      }
+      // V/倒V: mirror 锚点始终按 apex/end 当前索引镜像重算，
+      // 兼容旧数据（mirror 无 ts 或 ts 错误）与数据长度变化
+      if ((drawing.type === 'v-shape' || drawing.type === 'inverted-v-shape') && drawing.anchorPoints.length >= 3) {
+        const [apex, end, mirror] = drawing.anchorPoints
+        const mi = Math.round(2 * apex.dataIndex - end.dataIndex)
+        mirror.dataIndex = mi
+        mirror.ts = data[mi]?.ts ?? mirror.ts
       }
     }
   }

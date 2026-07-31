@@ -179,6 +179,8 @@ def sync_stock_metadata(client):
             time.sleep(TDX_REQUEST_DELAY)
         print(f"[新股] 历史K线完成 — 成功: {ok}/{len(new_codes)}")
 
+    return name_updates
+
 
 def _import_one_stock_history(client, code, name) -> bool:
     """为单只股票导入全量历史日K线（不复权原始数据）。"""
@@ -422,14 +424,6 @@ def append_today_adjusted(results: list, target_date: str,
 
     def process(code: str, name: str) -> bool:
         """处理单只股票"""
-        # 如果 adj 表已有今日数据 → 跳过
-        try:
-            existing = td_query_rest(f"SELECT 1 FROM sirs.k_1d_adj_{code} WHERE ts = '{target_date}'")
-            if existing:
-                return True
-        except Exception:
-            pass
-
         # 判断是否需要全量重算：刚同步了新 xdxr 事件 OR 今天是除权日
         needs_full = code in affected_set
         if not needs_full:
@@ -440,6 +434,16 @@ def append_today_adjusted(results: list, target_date: str,
                 needs_full = cur.fetchone() is not None
                 cur.close()
                 conn.close()
+            except Exception:
+                pass
+
+        # 幂等：非全量重算时，如果 adj 表已有今日数据 → 跳过（避免重复追加）
+        # 注意：全量重算（有除权事件）必须执行，即使今日行已存在（可能是错误的不复权行）
+        if not needs_full:
+            try:
+                existing = td_query_rest(f"SELECT 1 FROM sirs.k_1d_adj_{code} WHERE ts = '{target_date}'")
+                if existing:
+                    return True
             except Exception:
                 pass
 
@@ -582,6 +586,39 @@ def main():
         affected = set(affected_list)
         if affected:
             print(f"[XDXR] {len(affected)} 只有新除权事件，将在 Phase 4 中全量重算")
+
+    # 3b. XD/DR 除权日信号（默认开启）：当前名称以 XD/DR 开头的股票 = 当天除权，
+    #     强制拉取除权事件入库（不受 checkpoint 限制），事件缺失的前复权才能重算。
+    #     即使名称变更已在前一次运行写入 PG（如 600809），也能覆盖到。
+    try:
+        conn = get_pg_conn()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT code, name FROM stocks WHERE is_active = TRUE AND (name LIKE 'XD%' OR name LIKE 'DR%')"
+        )
+        xd_stocks = cur.fetchall()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        print(f"[WARN] 查询 XD/DR 股票失败: {e}")
+        xd_stocks = []
+
+    for code, xd_name in xd_stocks:
+        try:
+            xdxr_df = client.xdxr(symbol=code)
+            if xdxr_df is None or xdxr_df.empty:
+                continue
+            conn = get_pg_conn()
+            total, new_cnt = insert_xdxr_events(code, xdxr_df, conn)
+            conn.close()
+            if new_cnt > 0:
+                affected.add(code)
+                print(f"  [XD] {code} {xd_name}: {new_cnt} 条新除权事件，将在 Phase 4 全量重算")
+        except Exception as e:
+            print(f"  [WARN] {code} {xd_name}: xdxr 同步失败 {e}")
+
+    if xd_stocks and not affected:
+        print(f"[XD] {len(xd_stocks)} 只除权股无新事件（事件已入库）")
 
     # 4. 前复权 + 指标计算（传入 affected，一次到位）
     if results and not args.skip_adj:

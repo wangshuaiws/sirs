@@ -1,5 +1,13 @@
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
+import { useAuthStore } from '../stores/auth'
+
+// 请求级自定义标记（axios 允许自定义字段，这里补齐类型）
+declare module 'axios' {
+  export interface AxiosRequestConfig {
+    meta?: { silentAuth?: boolean }
+  }
+}
 
 const http = axios.create({
   baseURL: '/api',
@@ -20,6 +28,15 @@ http.interceptors.response.use(
   (res) => {
     const body = res.data
     if (body.code !== 0) {
+      if (body.code === 1003) {
+        // 未登录 / Token 过期：清除无效凭证（isLoggedIn 立即变 false），不弹通用 toast。
+        // 查询类请求（meta.silentAuth）静默降级；主动操作触发全局 auth-expired 事件由 App 弹登录框。
+        useAuthStore().clearAuth()
+        if (!(res.config as any).meta?.silentAuth) {
+          window.dispatchEvent(new Event('auth-expired'))
+        }
+        return Promise.reject(body)
+      }
       ElMessage.error(body.msg || '请求失败')
       return Promise.reject(body)
     }
@@ -63,7 +80,7 @@ export const groupApi = {
     http.get(`/groups/${id}/stocks`, { params: { page, size } }),
   addStock: (id: number, code: string) => http.post(`/groups/${id}/stocks`, { code }),
   removeStock: (id: number, code: string) => http.delete(`/groups/${id}/stocks/${code}`),
-  checkWatchlist: (code: string) => http.get(`/groups/watchlist/${code}`),
+  checkWatchlist: (code: string) => http.get(`/groups/watchlist/${code}`, { meta: { silentAuth: true } }),
 }
 
 // ── 通知 ──
@@ -78,9 +95,9 @@ export const notificationApi = {
     http.put('/notifications/read-all'),
 }
 
-// ── 画线工具 ──
+// ── 画线工具（K线页查询/保存，未登录或过期静默降级，不弹登录框） ──
 export const drawingApi = {
-  get: (stockCode: string) => http.get(`/drawings/${stockCode}`),
-  save: (stockCode: string, drawings: any[]) => http.put(`/drawings/${stockCode}`, drawings),
-  delete: (stockCode: string) => http.delete(`/drawings/${stockCode}`),
+  get: (stockCode: string) => http.get(`/drawings/${stockCode}`, { meta: { silentAuth: true } }),
+  save: (stockCode: string, drawings: any[]) => http.put(`/drawings/${stockCode}`, drawings, { meta: { silentAuth: true } }),
+  delete: (stockCode: string) => http.delete(`/drawings/${stockCode}`, { meta: { silentAuth: true } }),
 }

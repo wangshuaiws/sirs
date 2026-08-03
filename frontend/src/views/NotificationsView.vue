@@ -9,6 +9,12 @@ import LoginDialog from '../components/LoginDialog.vue'
 
 const router = useRouter()
 const vm = useNotifications()
+// v-model 必须绑定顶层 ref：composable 返回对象的 ref 属性在 v-model 中会被编译器
+// 生成普通赋值（vm.pageSize = $event）直接替换成原始值，导致 pageSize.value 失效、
+// 分页 v-if 隐藏。解构出顶层 ref（与 vm 内为同一对象）修复。
+const total = vm.total
+const page = vm.page
+const pageSize = vm.pageSize
 const { keyword: searchKeyword, results: searchResults, search: doSearch } = useStockSearch()
 const store = useAuthStore()
 const loginDialogVisible = ref(false)
@@ -245,12 +251,18 @@ onUnmounted(() => {
             </tbody>
             </table>
             </div>
-            <div class="stock-panel__pagination" v-if="vm.total.value > vm.pageSize.value">
-              <el-pagination size="small" background v-model:current-page="vm.page"
-                v-model:page-size="vm.pageSize" :page-sizes="[10,20,30,50]"
-                :total="vm.total.value"
+            <div class="stock-panel__pagination" v-if="total > pageSize">
+              <!-- 显式 :prop + @update 绑定顶层 ref（模板自动解包取 .value，事件回调更新 ref；
+                  避免 v-model 对 composable 返回的对象属性 ref 生成普通赋值，把 shallowRef
+                  替换成原始值导致 pageSize.value 失效、分页 v-if 隐藏） -->
+              <el-pagination size="small" background
+                :current-page="page"
+                :page-size="pageSize"
+                :page-sizes="[10,20,30,50]"
+                :total="total"
                 layout="sizes, prev, pager, next"
-                @size-change="vm.onSizeChange" @current-change="vm.onPageChange" />
+                @update:current-page="vm.onPageChange"
+                @update:page-size="vm.onSizeChange" />
             </div>
           </div>
         </template>
@@ -601,6 +613,7 @@ onUnmounted(() => {
 }
 .stock-table-wrap {
   flex: 1;
+  min-height: 0; /* 允许收缩：内容超高时滚动，避免把分页器挤出 body 被裁剪 */
   overflow-y: auto;
   overflow-x: hidden;
   background: transparent;

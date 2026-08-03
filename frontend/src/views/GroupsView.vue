@@ -495,6 +495,7 @@ async function loadGroupsAndSelectWatchlist() {
 }
 .stock-table-wrap {
   flex: 1;
+  min-height: 0; /* 允许收缩：内容超高时滚动，避免把分页器挤出 body 被裁剪 */
   overflow-y: auto;
   overflow-x: hidden;
   background: transparent;

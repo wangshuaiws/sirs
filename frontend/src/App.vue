@@ -59,7 +59,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from './stores/auth'
 import LoginDialog from './components/LoginDialog.vue'
@@ -70,6 +70,13 @@ const router = useRouter()
 const store = useAuthStore()
 const showLoginDialog = ref(false)
 const showRegisterDialog = ref(false)
+
+// 登录过期（后端 code=1003，主动操作场景）：弹全局登录框
+function onAuthExpired() {
+  showLoginDialog.value = true
+}
+onMounted(() => window.addEventListener('auth-expired', onAuthExpired))
+onUnmounted(() => window.removeEventListener('auth-expired', onAuthExpired))
 
 function logout() {
   store.clearAuth()

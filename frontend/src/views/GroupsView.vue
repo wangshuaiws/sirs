@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, shallowRef, ref, nextTick, watch, onMounted } from 'vue'
+import { computed, shallowRef, ref, nextTick, watch, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useGroupManager, useStockSearch } from '../composables/useGroupManager'
 import { useAuthStore } from '../stores/auth'
@@ -7,15 +7,82 @@ import LoginDialog from '../components/LoginDialog.vue'
 
 const router = useRouter()
 const gm = useGroupManager()
-const stockSearch = useStockSearch()
+// 顶部搜索（主面板搜索）
+const headerSearch = useStockSearch()
+// 弹框搜索（添加股票弹框内搜索）
+const modalSearch = useStockSearch()
+
 const store = useAuthStore()
 const loginDialogVisible = ref(false)
 const loginDialog = ref<InstanceType<typeof LoginDialog> | null>(null)
+const searchKeyword = headerSearch.keyword
+const searchResults = headerSearch.results
+const doSearch = headerSearch.search
 
 // 登录成功后回调
 const onLoginSuccess = () => {
   // 刷新分组数据
   gm.loadGroups()
+}
+
+// 搜索下拉
+const showDropdown = shallowRef(false)
+const activeIndex = shallowRef(0)
+
+const filteredResults = computed(() => {
+  const kw = searchKeyword.value
+  if (!kw) return searchResults.value.slice(0, 6)
+  return searchResults.value.filter(
+    (s: any) => s.code.includes(kw) || s.name.includes(kw),
+  ).slice(0, 6)
+})
+
+// 监听输入变化自动触发搜索
+watch(searchKeyword, (kw) => {
+  if (kw) doSearch(kw)
+  else searchResults.value = []
+  showDropdown.value = true
+  activeIndex.value = 0
+})
+
+function onSearchKeydown(e: KeyboardEvent) {
+  if (!showDropdown.value) return
+  const len = filteredResults.value.length
+  if (!len && e.key !== 'Escape') return
+  switch (e.key) {
+    case 'ArrowDown':
+      e.preventDefault()
+      activeIndex.value = (activeIndex.value + 1) % len
+      break
+    case 'ArrowUp':
+      e.preventDefault()
+      activeIndex.value = (activeIndex.value - 1 + len) % len
+      break
+    case 'Enter':
+      e.preventDefault()
+      if (filteredResults.value[activeIndex.value]) {
+        selectStock(filteredResults.value[activeIndex.value])
+      } else {
+        handleQuery(searchKeyword.value)
+      }
+      break
+    case 'Escape':
+      showDropdown.value = false
+      break
+  }
+}
+
+function selectStock(s: any) {
+  showDropdown.value = false
+  activeIndex.value = 0
+  searchKeyword.value = s.code
+  searchResults.value = []
+}
+
+function onDocClick(e: MouseEvent) {
+  if (!(e.target as HTMLElement).closest('.search-box')) {
+    showDropdown.value = false
+  }
 }
 
 // 添加股票弹框
@@ -26,13 +93,18 @@ const addStockInputRef = ref<HTMLInputElement | null>(null)
 // 弹框打开时自动聚焦 + 清空搜索
 watch(showAddStock, async (v) => {
   if (v) {
-    stockSearch.keyword.value = ''
-    stockSearch.results.value = []
+    modalSearch.keyword.value = ''
+    modalSearch.results.value = []
     pendingStock.value = null
     await nextTick()
     addStockInputRef.value?.focus()
   }
 })
+
+function handleQuery() {
+    gm.activeGroup.value.code = searchKeyword.value
+    if (gm.activeGroup.value) gm.selectGroup(gm.activeGroup.value, 1, stockPageSize.value)
+}
 
 // 分页（后端控制）
 const stockPage = shallowRef(1)
@@ -40,12 +112,14 @@ const stockPageSize = shallowRef(10)
 
 function onStockPageChange(p: number) {
   stockPage.value = p
+  gm.activeGroup.value.code = searchKeyword.value
   if (gm.activeGroup.value) gm.selectGroup(gm.activeGroup.value, p, stockPageSize.value)
 }
 
 function onStockSizeChange(size: number) {
   stockPageSize.value = size
   stockPage.value = 1
+  gm.activeGroup.value.code = searchKeyword.value
   if (gm.activeGroup.value) gm.selectGroup(gm.activeGroup.value, 1, size)
 }
 
@@ -91,8 +165,8 @@ async function deleteGroup(g: any) {
 
 function selectAddStock(s: any) {
   pendingStock.value = s
-  stockSearch.keyword.value = `${s.code} ${s.name}`
-  stockSearch.results.value = []
+  modalSearch.keyword.value = `${s.code} ${s.name}`
+  modalSearch.results.value = []
 }
 
 async function confirmAddStock() {
@@ -100,7 +174,7 @@ async function confirmAddStock() {
   await gm.addStock(pendingStock.value.code)
   showAddStock.value = false
   pendingStock.value = null
-  stockSearch.keyword.value = ''
+  modalSearch.keyword.value = ''
 }
 
 async function switchGroup(g: any) {
@@ -117,6 +191,7 @@ async function viewKline(code: string) {
 
 // 页面初始化时检查登录状态
 onMounted(async () => {
+    document.addEventListener('click', onDocClick)
   if (!store.isLoggedIn()) {
     return // 未登录由 App.vue 导航守卫拦截，不加载数据
   }
@@ -136,6 +211,9 @@ async function loadGroupsAndSelectWatchlist() {
     await gm.selectGroup(watchlist, 1, stockPageSize.value)
   }
 }
+onUnmounted(() => {
+  document.removeEventListener('click', onDocClick)
+})
 </script>
 
 <template>
@@ -179,6 +257,25 @@ async function loadGroupsAndSelectWatchlist() {
               <h3 class="stock-panel__name">{{ gm.activeGroup.value.name }}</h3>
               <p class="stock-panel__desc" v-if="gm.activeGroup.value.description">{{ gm.activeGroup.value.description }}</p>
             </div>
+             <div class="search-box" style="width:240px;flex-shrink:0">
+            <span class="search-box__icon">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+            </span>
+            <input v-model="searchKeyword" @keydown="onSearchKeydown" type="text" class="search-box__input" placeholder="搜索代码或名称" />
+            <div class="search-box__dropdown" v-if="showDropdown && (filteredResults.length || searchKeyword)">
+              <template v-if="filteredResults.length">
+                <div v-for="(s, i) in filteredResults" :key="s.code" class="search-box__item"
+                  :class="{ 'search-box__item--active': i === activeIndex }"
+                  @click="selectStock(s)" @mouseenter="activeIndex = i">
+                  <span class="search-box__code">{{ s.code }}</span>
+                  <span class="search-box__name">{{ s.name }}</span>
+                  <span :class="['badge', s.exchange === 'SH' ? 'badge--sh' : 'badge--sz']">{{ s.exchange === 'SH' ? '沪' : '深' }}</span>
+                </div>
+              </template>
+              <div class="search-box__empty" v-else-if="searchKeyword">未找到匹配股票</div>
+            </div>
+          </div>
+            <button class="btn-primary" style="padding:4px 14px;font-size:12px" @click="handleQuery()">查询</button>
             <button class="btn-primary stock-panel__add-btn" @click="showAddStock = true">+ 添加股票</button>
           </div>
 
@@ -274,15 +371,15 @@ async function loadGroupsAndSelectWatchlist() {
           <label class="modal-form__label">搜索股票</label>
           <input
             ref="addStockInputRef"
-            :value="stockSearch.keyword.value"
-            @input="stockSearch.search(($event.target as HTMLInputElement).value)"
+            :value="modalSearch.keyword.value"
+            @input="modalSearch.search(($event.target as HTMLInputElement).value)"
             type="text"
             class="input-dark"
             placeholder="输入代码或名称搜索"
           />
-          <div class="modal-form__search-results" v-if="stockSearch.results.value.length">
+          <div class="modal-form__search-results" v-if="modalSearch.results.value.length">
             <div
-              v-for="s in stockSearch.results.value"
+              v-for="s in modalSearch.results.value"
               :key="s.code"
               class="modal-form__search-item"
               @click="selectAddStock(s)"
@@ -525,6 +622,95 @@ async function loadGroupsAndSelectWatchlist() {
 }
 .stock-panel__pagination :deep(.el-select .el-input__inner) {
   color: var(--text-primary);
+}
+/* ── 股票搜索（对齐 KlineView） ── */
+.search-box {
+  position: relative;
+  width: 240px;
+  flex-shrink: 0;
+}
+.search-box__icon {
+  position: absolute;
+  left: 11px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-tertiary);
+  display: flex;
+  align-items: center;
+  pointer-events: none;
+}
+.search-box:focus-within .search-box__icon {
+  color: var(--accent);
+}
+.search-box__input {
+  width: 100%;
+  padding: 8px 12px 8px 33px;
+  background: var(--bg-root);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-family: var(--font-sans);
+  outline: none;
+  height: 34px;
+}
+.search-box__input:focus {
+  border-color: var(--accent);
+  box-shadow: var(--shadow-glow);
+}
+.search-box__input::placeholder {
+  color: var(--text-tertiary);
+}
+.search-box__dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  background: var(--bg-overlay);
+  border: 1px solid var(--border-emphasis);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  max-height: 260px;
+  overflow-y: auto;
+  z-index: 50;
+  backdrop-filter: blur(12px);
+}
+.search-box__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 14px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.search-box__item:last-child {
+  border-bottom: none;
+}
+.search-box__item:hover,
+.search-box__item--active {
+  background: var(--bg-hover);
+}
+.search-box__item--active {
+  border-left: 2px solid var(--accent);
+  padding-left: 12px;
+}
+.search-box__code {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--accent);
+  min-width: 68px;
+}
+.search-box__name {
+  font-size: 13px;
+  color: var(--text-primary);
+  flex: 1;
+}
+.search-box__empty {
+  padding: 28px 14px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-tertiary);
 }
 .stock-table {
   width: 100%;

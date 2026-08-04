@@ -480,6 +480,15 @@ def append_today_adjusted(results: list, target_date: str,
                 )
                 tail.reverse()
             except Exception:
+                # 表不存在（如新上市股票首日）→ 先建表再追加，避免 INSERT 报 Table does not exist
+                try:
+                    safe_name = name.replace("'", "''")
+                    td_rest_execute(
+                        f"CREATE TABLE IF NOT EXISTS sirs.k_1d_adj_{code} "
+                        f"USING sirs.kline_1d_adj TAGS ('{code}', '{safe_name}')"
+                    )
+                except Exception:
+                    pass  # 建表失败则维持原行为：INSERT 失败 → 外层降级重算兜底
                 tail = []
 
             # 3. 组合数组

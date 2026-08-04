@@ -14,15 +14,14 @@ export function useGroupManager() {
     groups.value = (res.data || []).map((g: any) => ({ ...g, _stockCount: 0 }))
   }
 
-  async function selectGroup(g: any, page = 1, size = 10) {
+  async function selectGroup(g: any,  page = 1, size = 10) {
     activeGroup.value = g
     _currentPage = page
     _pageSize = size
-    const res = await groupApi.getStocks(g.id, page, size)
+    const res = await groupApi.getStocks(g.id, g.code, page, size)
     groupStocks.value = res.data?.records || []
     groupStockTotal.value = res.data?.total || 0
   }
-
   async function saveGroup(name: string, description: string, editingId?: number) {
     if (editingId) {
       await groupApi.update(editingId, { name, description })

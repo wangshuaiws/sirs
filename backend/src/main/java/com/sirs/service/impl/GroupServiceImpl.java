@@ -14,6 +14,7 @@ import com.sirs.service.GroupService;
 import org.springframework.beans.BeanUtils;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StringUtils;
 
 import java.util.*;
 import java.util.stream.Collectors;
@@ -89,12 +90,13 @@ public class GroupServiceImpl implements GroupService {
     }
 
     @Override
-    public PageResult<GroupStockVO> getGroupStocks(Long userId, Long groupId, int page, int size) {
+    public PageResult<GroupStockVO> getGroupStocks(Long userId, Long groupId, String code, int page, int size) {
         getAndVerifyOwner(userId, groupId);
 
         Page<GroupStock> groupStockPage = new Page<>(page, size);
         Page<GroupStock> groupStockResult = groupStockMapper.selectPage(groupStockPage,
-                new LambdaQueryWrapper<GroupStock>().eq(GroupStock::getGroupId, groupId));
+                new LambdaQueryWrapper<GroupStock>().eq(GroupStock::getGroupId, groupId)
+                        .eq(StringUtils.hasText(code), GroupStock::getStockCode, code));
 
         List<String> codes = groupStockResult.getRecords().stream().map(GroupStock::getStockCode).toList();
         List<Stock> stocks = codes.isEmpty() ? List.of() : stockMapper.selectList(

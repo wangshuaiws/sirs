@@ -167,7 +167,7 @@ def get_or_create_state(cur, user_id, stock_code):
     """获取或创建 stock_signal_state 行，返回 dict"""
     cur.execute("""
         SELECT signal_state, golden_cross_date,
-               white_buy_notified, yellow_buy_notified
+               white_buy_notified, yellow_buy_notified, state_date
         FROM stock_signal_state
         WHERE user_id = %s AND stock_code = %s
     """, (user_id, stock_code))
@@ -178,6 +178,7 @@ def get_or_create_state(cur, user_id, stock_code):
             "golden_cross_date": row[1],
             "white_buy_notified": row[2],
             "yellow_buy_notified": row[3],
+            "state_date": row[4],
         }
     # 不存在 → 插入默认行
     cur.execute("""
@@ -190,22 +191,24 @@ def get_or_create_state(cur, user_id, stock_code):
         "golden_cross_date": None,
         "white_buy_notified": False,
         "yellow_buy_notified": False,
+        "state_date": None,
     }
 
 
 def update_state(cur, user_id, stock_code, new_state, golden_cross_date,
-                  white_buy_notified, yellow_buy_notified):
-    """更新 stock_signal_state"""
+                  white_buy_notified, yellow_buy_notified, state_date):
+    """更新 stock_signal_state（state_date = 状态转移发生的交易日，用于同日幂等）"""
     cur.execute("""
         UPDATE stock_signal_state
         SET signal_state = %s,
             golden_cross_date = %s,
             white_buy_notified = %s,
             yellow_buy_notified = %s,
+            state_date = %s,
             updated_at = NOW()
         WHERE user_id = %s AND stock_code = %s
     """, (new_state, golden_cross_date, white_buy_notified, yellow_buy_notified,
-          user_id, stock_code))
+          state_date, user_id, stock_code))
 
 
 def insert_notification(cur, user_id, stock_code, stock_name, notif, today):
@@ -388,7 +391,7 @@ def scan_market_golden_cross(cur, today_str, users, dry_run=False):
                 continue
 
             update_state(cur, uid, code, "HAS_GOLDEN_CROSS",
-                         datetime.now().date(), False, False)
+                         datetime.now().date(), False, False, datetime.now().date())
             stock_name = code_name.get(code, "")
             notif = {
                 "type": "GOLDEN_CROSS",
@@ -476,6 +479,10 @@ def scan_all_users(target_user_id=None, dry_run=False):
             # 获取当前状态
             state_row = get_or_create_state(cur, uid, code)
 
+            # 幂等：状态今天已转移过 → 跳过（防止同一天重复运行把状态机推进多级）
+            if state_row["state_date"] == today.date():
+                continue
+
             # 执行状态机
             new_state, notifications, new_white, new_yellow = transition(
                 state_row, latest_close, prev_close,
@@ -508,10 +515,10 @@ def scan_all_users(target_user_id=None, dry_run=False):
                     removed = remove_from_non_watchlist_groups(cur, uid, code)
                     print(f"  [CLEAR] user={uid} {code} {stock_name} 已移除非自选股分组")
 
-            # 更新状态
+            # 更新状态（state_date = 今天，标记今日已处理）
             if new_state != state_row["signal_state"] or new_white != state_row.get("white_buy_notified") or new_yellow != state_row.get("yellow_buy_notified"):
                 update_state(cur, uid, code, new_state, golden_cross_date,
-                             new_white, new_yellow)
+                             new_white, new_yellow, today.date())
 
     pg_conn.commit()
     cur.close()

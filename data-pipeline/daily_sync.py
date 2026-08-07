@@ -20,6 +20,7 @@ import argparse
 from datetime import datetime, date, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+import requests
 from tqdm import tqdm
 from mootdx.quotes import Quotes
 
@@ -61,6 +62,29 @@ def get_latest_trading_day(client) -> str:
     if today.weekday() >= 5:
         today = today - timedelta(days=today.weekday() - 4)
     return today.isoformat()
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# 当日除权除息检测（东财 datacenter 按除权日查询）
+# ═══════════════════════════════════════════════════════════════════════
+
+def fetch_ex_dividend_codes(date_str: str) -> list:
+    """查询指定日期除权除息的所有股票代码（沪深全覆盖）。
+
+    通达信名称信号（XD/DR 前缀）仅沪市除权日生效，深市除权日名称不变，
+    checkpoint 又可能未过期导致跳过重拉 —— 必须按除权日直接拉取列表兜底。
+    """
+    url = ("https://datacenter-web.eastmoney.com/api/data/v1/get"
+           "?sortColumns=EX_DIVIDEND_DATE&sortTypes=-1"
+           "&pageSize=500&pageNumber=1"
+           "&reportName=RPT_SHAREBONUS_DET&columns=ALL"
+           "&source=WEB&client=WEB"
+           f"&filter=(EX_DIVIDEND_DATE%3D%27{date_str}%27)")
+    resp = requests.get(url, timeout=15)
+    resp.raise_for_status()
+    data = (resp.json().get("result") or {}).get("data") or []
+    codes = sorted({d["SECURITY_CODE"] for d in data if d.get("SECURITY_CODE")})
+    return codes
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -590,7 +614,7 @@ def main():
     # 3. 先同步除权除息事件（让 adj 计算知道哪些股票需要全量重算）
     affected = set()
     if args.sync_xdxr:
-        from sync_xdxr import sync_all_stocks
+        from sync_xdxr import sync_all_stocks, load_xdxr_checkpoint, write_xdxr_checkpoint
         affected_list = sync_all_stocks(client)
         affected = set(affected_list)
         if affected:
@@ -628,6 +652,43 @@ def main():
 
     if xd_stocks and not affected:
         print(f"[XD] {len(xd_stocks)} 只除权股无新事件（事件已入库）")
+
+    # 3c. 当日除权除息强制同步（东财按除权日查询，沪深全覆盖）：
+    #     深市除权日名称不变（无 XD/DR 前缀），3b 的名称信号覆盖不到，
+    #     且 checkpoint 未过期的股票不会重拉 —— 这里按日期直接拿到当日
+    #     除权列表，逐只强制拉取事件入库，事件缺失的前复权才能重算。
+    if args.sync_xdxr:
+        try:
+            ex_codes = fetch_ex_dividend_codes(target)
+            print(f"[XD] 东财当日除权除息 {len(ex_codes)} 只: {ex_codes}")
+        except Exception as e:
+            ex_codes = []
+            print(f"[WARN] 东财当日除权列表获取失败: {e}")
+
+        checkpoint_dirty = {}
+        for code in ex_codes:
+            try:
+                xdxr_df = client.xdxr(symbol=code)
+                if xdxr_df is None or xdxr_df.empty:
+                    # 通达信事件尚未更新 → 标记为未同步，下次运行自动重拉
+                    checkpoint_dirty[code] = None
+                    print(f"  [XD] {code}: 通达信暂无事件，标记待重拉")
+                    continue
+                conn = get_pg_conn()
+                total, new_cnt = insert_xdxr_events(code, xdxr_df, conn)
+                conn.close()
+                checkpoint_dirty[code] = date.today().isoformat()
+                if new_cnt > 0:
+                    affected.add(code)
+                    print(f"  [XD] {code}: {new_cnt} 条新除权事件，将在 Phase 4 全量重算")
+            except Exception as e:
+                print(f"  [WARN] {code}: xdxr 强制同步失败 {e}")
+
+        if checkpoint_dirty:
+            checkpoint = load_xdxr_checkpoint()
+            checkpoint.update(checkpoint_dirty)
+            write_xdxr_checkpoint(checkpoint)
+            print(f"[XD] checkpoint 已更新 {len(checkpoint_dirty)} 只")
 
     # 4. 前复权 + 指标计算（传入 affected，一次到位）
     if results and not args.skip_adj:

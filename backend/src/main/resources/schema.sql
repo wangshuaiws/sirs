@@ -70,6 +70,7 @@ CREATE TABLE IF NOT EXISTS stock_signal_state (
     golden_cross_date    DATE,
     white_buy_notified   BOOLEAN      DEFAULT FALSE,
     yellow_buy_notified  BOOLEAN      DEFAULT FALSE,
+    state_date           DATE,  -- 状态最近一次转移的交易日，同一天重复运行幂等跳过
     updated_at           TIMESTAMP    DEFAULT NOW(),
     UNIQUE (user_id, stock_code)
 );

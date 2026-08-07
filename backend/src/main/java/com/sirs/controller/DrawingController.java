@@ -5,6 +5,8 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.web.bind.annotation.*;
 
+import java.nio.channels.Channel;
+
 @RestController
 @RequestMapping("/api/drawings")
 public class DrawingController {
